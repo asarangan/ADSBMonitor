@@ -1,0 +1,16 @@
+<resources>
+    <string name="app_name">ADSB Monitor</string>
+    <string name="zero">0</string>
+    <string name="ff_mode">FF Mode</string>
+    <string name="startRecord">Record</string>
+    <string name="stopRecord">Idle</string>
+    <string name="open_mode">GDL90 Mode</string>
+    <string name="gps_light">GPS</string>
+    <string name="traffic_light">Traffic</string>
+    <string name="ahrs_light">AHRS</string>
+    <string name="uplink_light">Uplink</string>
+    <string name="heartbeat_light">Heart Beat</string>
+    <string name="Port4000Error">Error: Port 4000 is Locked</string>
+    <string name="IPError">Invalid IP - Check Wifi</string>
+    <string name="runTimeError">Run time error</string>
+</resources>

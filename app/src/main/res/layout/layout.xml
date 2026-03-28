@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <TextView
+            android:id="@+id/textViewUplinkCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/uplink_light"
+            app:layout_constraintEnd_toStartOf="@+id/uplink_light" />
+
+        <TextView
+            android:id="@+id/textViewAHRSCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/ahrs_light"
+            app:layout_constraintEnd_toStartOf="@+id/ahrs_light" />
+
+        <TextView
+            android:id="@+id/textViewTrafficCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/traffic_light"
+            app:layout_constraintEnd_toStartOf="@+id/traffic_light" />
+
+        <TextView
+            android:id="@+id/textViewGPSCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/gps_light"
+            app:layout_constraintEnd_toStartOf="@+id/gps_light" />
+
+        <TextView
+            android:id="@+id/textViewOpenMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="24dp"
+            android:text="@string/open_mode"
+            android:textColor="@android:color/black"
+            android:textSize="24sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toEndOf="@+id/switchGDL90"
+            app:layout_constraintTop_toTopOf="@+id/switchGDL90" />
+
+        <TextView
+            android:id="@+id/textViewUplink"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/uplink_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@+id/textViewAHRS"
+            app:layout_constraintTop_toBottomOf="@+id/textViewAHRS" />
+
+        <Button
+            android:id="@+id/uplink_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewUplink"
+            app:layout_constraintTop_toTopOf="@+id/textViewUplink" />
+
+        <TextView
+            android:id="@+id/textViewAHRS"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="@string/ahrs_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@+id/textViewTraffic"
+            app:layout_constraintTop_toBottomOf="@+id/textViewTraffic" />
+
+        <Button
+            android:id="@+id/ahrs_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewAHRS"
+            app:layout_constraintTop_toTopOf="@+id/textViewAHRS" />
+
+        <TextView
+            android:id="@+id/textViewTraffic"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/traffic_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@+id/textViewGPS"
+            app:layout_constraintTop_toBottomOf="@+id/textViewGPS" />
+
+        <Button
+            android:id="@+id/traffic_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewTraffic"
+            app:layout_constraintTop_toTopOf="@+id/textViewTraffic" />
+
+        <TextView
+            android:id="@+id/textViewGPS"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/gps_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@+id/textViewHeartbeat"
+            app:layout_constraintTop_toBottomOf="@+id/textViewHeartbeat" />
+
+        <Button
+            android:id="@+id/gps_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewGPS"
+            app:layout_constraintTop_toTopOf="@+id/textViewGPS" />
+
+        <Switch
+            android:id="@+id/switchGDL90"
+            android:layout_width="54dp"
+            android:layout_height="49dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="140dp"
+            android:layout_marginEnd="16dp"
+            android:scaleX="2"
+            android:scaleY="2"
+            android:textSize="12sp"
+            app:layout_constraintEnd_toStartOf="@+id/textViewOpenMode"
+            app:layout_constraintStart_toEndOf="@+id/textViewFFMode"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <TextView
+            android:id="@+id/textViewFFMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="24dp"
+            android:layout_marginTop="8dp"
+            android:text="@string/ff_mode"
+            android:textColor="@android:color/black"
+            android:textSize="24sp"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@+id/switchGDL90" />
+
+        <Button
+            android:id="@+id/heartbeat_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewHeartbeat"
+            app:layout_constraintTop_toTopOf="@+id/textViewHeartbeat" />
+
+        <TextView
+            android:id="@+id/textViewHeartbeat"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="28dp"
+            android:layout_marginTop="72dp"
+            android:text="@string/heartbeat_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@id/switchGDL90"
+            app:layout_constraintTop_toBottomOf="@id/switchGDL90" />
+
+        <TextView
+            android:id="@+id/textViewHeartbeatCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/heartbeat_light"
+            app:layout_constraintEnd_toStartOf="@+id/heartbeat_light" />
+
+        <TextView
+            android:id="@+id/textViewError"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="100dp"
+            android:textAppearance="@style/TextAppearance.AppCompat.Large"
+            android:textColor="#EC0A0A"
+            android:textSize="24sp"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="@id/uplink_light" />
+
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</LinearLayout>
