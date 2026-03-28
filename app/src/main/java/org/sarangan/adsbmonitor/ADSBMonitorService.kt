@@ -11,15 +11,23 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.MulticastSocket
+import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import kotlin.concurrent.thread
-import androidx.core.app.ServiceCompat
 
 class ADSBMonitorService : Service() {
+
+    companion object {
+        private const val TAG = "ADSBMonitor"
+        private const val CHANNEL_ID = "adsb_monitor_channel"
+        private const val NOTIFICATION_ID = 1001
+        private const val GDL90_PORT = 4000
+        private const val STRATUS_PORT = 41500
+    }
 
     private var broadcastAddress: InetAddress? = null
 
@@ -28,7 +36,7 @@ class ADSBMonitorService : Service() {
     private var loggingEnabled = false
 
     private var socketOut: DatagramSocket? = null
-    private var socketIn: MulticastSocket? = null
+    private var socketIn: DatagramSocket? = null
     private var workerThread: Thread? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -42,18 +50,14 @@ class ADSBMonitorService : Service() {
 
     private var gpxLogger: GpxLogger? = null
 
+    @Volatile
+    private var cleanedUp = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        //startForeground(NOTIFICATION_ID, buildNotification("Starting"))
-    }
-
-    private fun sendModePacketAsync() {
-        Thread {
-            sendModePacket()
-        }.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -67,6 +71,8 @@ class ADSBMonitorService : Service() {
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     else 0
                 )
+
+                Log.d(TAG, "Foreground notification started")
 
                 openGdlMode = intent.getBooleanExtra(AdsbExtras.EXTRA_OPEN_GDL, true)
                 loggingEnabled = intent.getBooleanExtra(AdsbExtras.EXTRA_LOGGING_ENABLED, false)
@@ -104,7 +110,6 @@ class ADSBMonitorService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // User swiped the app away from Recents.
         stopAndCleanup()
         super.onTaskRemoved(rootIntent)
     }
@@ -114,27 +119,32 @@ class ADSBMonitorService : Service() {
         super.onDestroy()
     }
 
-    @Volatile
-    private var cleanedUp = false
-
     private fun stopAndCleanup() {
         if (cleanedUp) return
         cleanedUp = true
 
         running = false
 
-        // Stop foreground notification and service
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {
         }
 
-        // Close sockets / locks
-        try { socketIn?.close() } catch (_: Exception) {}
-        try { socketOut?.close() } catch (_: Exception) {}
-        try { multicastLock?.release() } catch (_: Exception) {}
+        try {
+            socketIn?.close()
+        } catch (_: Exception) {
+        }
 
-        // Close GPX file on a background thread because file I/O is blocking
+        try {
+            socketOut?.close()
+        } catch (_: Exception) {
+        }
+
+        try {
+            multicastLock?.release()
+        } catch (_: Exception) {
+        }
+
         Thread {
             try {
                 gpxLogger?.close()
@@ -148,10 +158,10 @@ class ADSBMonitorService : Service() {
 
     private fun startMonitoring() {
         running = true
-
-        Log.d(TAG, "broadcastAddress=${broadcastAddress?.hostAddress}")
+        cleanedUp = false
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
         multicastLock = wifiManager.createMulticastLock("adsb_multicast_lock").apply {
             setReferenceCounted(false)
             acquire()
@@ -160,6 +170,7 @@ class ADSBMonitorService : Service() {
         try {
             socketOut = DatagramSocket().apply {
                 broadcast = true
+                reuseAddress = true
             }
         } catch (e: Exception) {
             Log.e(TAG, "Unable to create output socket", e)
@@ -184,19 +195,28 @@ class ADSBMonitorService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Unable to compute broadcast address", e)
-            broadcastAddress = InetAddress.getByName("255.255.255.255")
+            try {
+                broadcastAddress = InetAddress.getByName("255.255.255.255")
+            } catch (_: Exception) {
+                broadcastAddress = null
+            }
         }
+
+        Log.d(TAG, "broadcastAddress=${broadcastAddress?.hostAddress}")
 
         setLogging(loggingEnabled)
 
         workerThread = thread(start = true, name = "adsb-monitor-thread") {
             try {
-                socketIn = MulticastSocket(4000).apply {
+                socketIn = DatagramSocket(null).apply {
+                    reuseAddress = true
                     soTimeout = 2000
+                    bind(InetSocketAddress(GDL90_PORT))
                 }
+                Log.d(TAG, "Listening on UDP $GDL90_PORT with reuseAddress=true")
             } catch (e: Exception) {
-                broadcastError("Cannot open port 4000")
-                Log.e(TAG, "Unable to open port 4000", e)
+                broadcastError("Cannot open port $GDL90_PORT")
+                Log.e(TAG, "Unable to open shared port $GDL90_PORT", e)
                 stopSelf()
                 return@thread
             }
@@ -215,22 +235,13 @@ class ADSBMonitorService : Service() {
                     processPacket(bytes)
                 } catch (_: SocketTimeoutException) {
                 } catch (e: Exception) {
-                    Log.e(TAG, "Runtime exception", e)
-                    broadcastError("Runtime error")
+                    if (running) {
+                        Log.e(TAG, "Runtime exception", e)
+                        broadcastError("Runtime error")
+                    }
                 }
             }
         }
-    }
-
-    private fun stopMonitoring() {
-        running = false
-
-        try { socketIn?.close() } catch (_: Exception) {}
-        try { socketOut?.close() } catch (_: Exception) {}
-        try { multicastLock?.release() } catch (_: Exception) {}
-
-        gpxLogger?.close()
-        gpxLogger = null
     }
 
     private fun processPacket(packet: ByteArray) {
@@ -255,7 +266,6 @@ class ADSBMonitorService : Service() {
             }
             type == 0x4C -> {
                 recordPacket("ahrs")
-                // AHRS intentionally not logged
             }
         }
     }
@@ -292,11 +302,21 @@ class ADSBMonitorService : Service() {
     private fun setLogging(enabled: Boolean) {
         loggingEnabled = enabled
         if (enabled) {
-            if (gpxLogger == null) gpxLogger = GpxLogger(this)
+            if (gpxLogger == null) {
+                gpxLogger = GpxLogger(this)
+                Log.d(TAG, "Logging started: ${gpxLogger?.getLocationDescription()}")
+            }
         } else {
             gpxLogger?.close()
             gpxLogger = null
+            Log.d(TAG, "Logging stopped")
         }
+    }
+
+    private fun sendModePacketAsync() {
+        Thread {
+            sendModePacket()
+        }.start()
     }
 
     private fun sendModePacket() {
@@ -311,15 +331,15 @@ class ADSBMonitorService : Service() {
 
             val target = broadcastAddress ?: InetAddress.getByName("255.255.255.255")
 
-            Log.d(TAG, "sendModePacket: target=${target.hostAddress} port=41500 bytes=${sendData.size}")
+            Log.d(TAG, "sendModePacket: target=${target.hostAddress} port=$STRATUS_PORT bytes=${sendData.size}")
             Log.d(TAG, "sendModePacket: wifi connected=${isWifiConnected()} broadcast=${outSocket.broadcast}")
 
-            val packet = DatagramPacket(sendData, sendData.size, target, 41500)
+            val packet = DatagramPacket(sendData, sendData.size, target, STRATUS_PORT)
             outSocket.send(packet)
 
             Log.d(TAG, "sendModePacket: success")
         } catch (e: Exception) {
-            Log.e(TAG, "sendModePacket failed: ${e::class.java.name}: ${e}", e)
+            Log.e(TAG, "sendModePacket failed: ${e::class.java.name}: $e", e)
             broadcastError("Unable to send Stratus mode packet: ${e::class.java.simpleName}")
         }
     }
@@ -356,10 +376,12 @@ class ADSBMonitorService : Service() {
         )
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("ADSB Monitor")
+            .setContentTitle("ADS-B Monitor Running")
             .setContentText(text)
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(android.R.drawable.stat_sys_upload_done)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPendingIntent)
             .build()
     }
@@ -373,10 +395,5 @@ class ADSBMonitorService : Service() {
 
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text))
-    }
-
-    companion object {
-        private const val CHANNEL_ID = "adsb_monitor_channel"
-        private const val NOTIFICATION_ID = 1001
     }
 }
