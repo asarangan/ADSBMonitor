@@ -1,4 +1,4 @@
-package org.sarangan.adsbmonitor
+package org.sarangan.ADSBMonitor
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -74,8 +74,8 @@ class ADSBMonitorService : Service() {
 
                 Log.d(TAG, "Foreground notification started")
 
-                openGdlMode = intent.getBooleanExtra(AdsbExtras.EXTRA_OPEN_GDL, true)
-                loggingEnabled = intent.getBooleanExtra(AdsbExtras.EXTRA_LOGGING_ENABLED, false)
+                openGdlMode = intent.getBooleanExtra(ADSBExtras.EXTRA_OPEN_GDL, true)
+                loggingEnabled = intent.getBooleanExtra(ADSBExtras.EXTRA_LOGGING_ENABLED, false)
 
                 if (!running) {
                     startMonitoring()
@@ -88,14 +88,14 @@ class ADSBMonitorService : Service() {
             }
 
             ADSBActions.ACTION_SET_MODE -> {
-                openGdlMode = intent.getBooleanExtra(AdsbExtras.EXTRA_OPEN_GDL, true)
+                openGdlMode = intent.getBooleanExtra(ADSBExtras.EXTRA_OPEN_GDL, true)
                 sendModePacketAsync()
                 broadcastStatus()
                 updateNotification()
             }
 
             ADSBActions.ACTION_SET_LOGGING -> {
-                val enabled = intent.getBooleanExtra(AdsbExtras.EXTRA_LOGGING_ENABLED, false)
+                val enabled = intent.getBooleanExtra(ADSBExtras.EXTRA_LOGGING_ENABLED, false)
                 setLogging(enabled)
                 broadcastStatus()
                 updateNotification()
@@ -276,8 +276,8 @@ class ADSBMonitorService : Service() {
 
         val intent = Intent(ADSBActions.ACTION_PACKET).apply {
             setPackage(packageName)
-            putExtra(AdsbExtras.EXTRA_PACKET_TYPE, token)
-            putExtra(AdsbExtras.EXTRA_COUNT, newCount)
+            putExtra(ADSBExtras.EXTRA_PACKET_TYPE, token)
+            putExtra(ADSBExtras.EXTRA_COUNT, newCount)
         }
         sendBroadcast(intent)
     }
@@ -285,8 +285,8 @@ class ADSBMonitorService : Service() {
     private fun broadcastStatus() {
         val intent = Intent(ADSBActions.ACTION_STATUS).apply {
             setPackage(packageName)
-            putExtra(AdsbExtras.EXTRA_OPEN_GDL, openGdlMode)
-            putExtra(AdsbExtras.EXTRA_LOGGING_ENABLED, loggingEnabled)
+            putExtra(ADSBExtras.EXTRA_OPEN_GDL, openGdlMode)
+            putExtra(ADSBExtras.EXTRA_LOGGING_ENABLED, loggingEnabled)
         }
         sendBroadcast(intent)
     }
@@ -294,7 +294,7 @@ class ADSBMonitorService : Service() {
     private fun broadcastError(text: String) {
         val intent = Intent(ADSBActions.ACTION_ERROR).apply {
             setPackage(packageName)
-            putExtra(AdsbExtras.EXTRA_ERROR_TEXT, text)
+            putExtra(ADSBExtras.EXTRA_ERROR_TEXT, text)
         }
         sendBroadcast(intent)
     }

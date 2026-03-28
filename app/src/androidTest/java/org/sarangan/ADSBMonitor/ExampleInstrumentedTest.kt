@@ -1,4 +1,4 @@
-package org.sarangan.adsbmonitor
+package org.sarangan.ADSBMonitor
 
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4

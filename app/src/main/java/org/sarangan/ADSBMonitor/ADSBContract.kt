@@ -1,6 +1,6 @@
-package org.sarangan.adsbmonitor
+package org.sarangan.ADSBMonitor
 
-const val TAG: String = "adsbMonitor"
+const val TAG: String = "ADSBMonitor"
 
 val stratusDataOpen: ByteArray = byteArrayOf(
     0xC2.toByte(),
@@ -25,17 +25,17 @@ val stratusDataClose: ByteArray = byteArrayOf(
 )
 
 object ADSBActions {
-    const val ACTION_START = "org.sarangan.adsbMonitor.action.START"
-    const val ACTION_STOP = "org.sarangan.adsbMonitor.action.STOP"
-    const val ACTION_SET_MODE = "org.sarangan.adsbMonitor.action.SET_MODE"
-    const val ACTION_SET_LOGGING = "org.sarangan.adsbMonitor.action.SET_LOGGING"
+    const val ACTION_START = "org.sarangan.ADSBMonitor.action.START"
+    const val ACTION_STOP = "org.sarangan.ADSBMonitor.action.STOP"
+    const val ACTION_SET_MODE = "org.sarangan.ADSBMonitor.action.SET_MODE"
+    const val ACTION_SET_LOGGING = "org.sarangan.ADSBMonitor.action.SET_LOGGING"
 
-    const val ACTION_STATUS = "org.sarangan.adsbMonitor.action.STATUS"
-    const val ACTION_PACKET = "org.sarangan.adsbMonitor.action.PACKET"
-    const val ACTION_ERROR = "org.sarangan.adsbMonitor.action.ERROR"
+    const val ACTION_STATUS = "org.sarangan.ADSBMonitor.action.STATUS"
+    const val ACTION_PACKET = "org.sarangan.ADSBMonitor.action.PACKET"
+    const val ACTION_ERROR = "org.sarangan.ADSBMonitor.action.ERROR"
 }
 
-object AdsbExtras {
+object ADSBExtras {
     const val EXTRA_OPEN_GDL = "open_gdl"
     const val EXTRA_LOGGING_ENABLED = "logging_enabled"
 

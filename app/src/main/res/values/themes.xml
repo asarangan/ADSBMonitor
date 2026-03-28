@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.adsbMonitor" parent="android:ThemeOverlay.Material" >
+    <style name="Theme.ADSBMonitor" parent="android:ThemeOverlay.Material" >
     </style>
 </resources>

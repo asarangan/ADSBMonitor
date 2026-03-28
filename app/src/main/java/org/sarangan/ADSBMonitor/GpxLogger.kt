@@ -1,4 +1,4 @@
-package org.sarangan.adsbmonitor
+package org.sarangan.ADSBMonitor
 
 import android.content.ContentValues
 import android.content.Context
@@ -25,7 +25,7 @@ data class OwnshipFix(
 class GpxLogger(private val context: Context) {
 
     companion object {
-        private const val TAG = "ADSB2"
+        private const val TAG = "ADSBMonitor"
     }
 
     private val trafficQueue = ConcurrentLinkedQueue<String>()

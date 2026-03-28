@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "org.sarangan.adsbmonitor"
+    namespace = "org.sarangan.ADSBMonitor"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "org.sarangan.adsbmonitor"
+        applicationId = "org.sarangan.ADSBMonitor"
         minSdk = 24
         targetSdk = 36
         versionCode = 1

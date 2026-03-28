@@ -1,4 +1,4 @@
-package org.sarangan.adsbmonitor
+package org.sarangan.ADSBMonitor
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -58,12 +58,12 @@ class MainActivity : ComponentActivity() {
 
                         val type =
                             intent.getStringExtra(
-                                AdsbExtras.EXTRA_PACKET_TYPE
+                                ADSBExtras.EXTRA_PACKET_TYPE
                             ) ?: return
 
                         val count =
                             intent.getIntExtra(
-                                AdsbExtras.EXTRA_COUNT,
+                                ADSBExtras.EXTRA_COUNT,
                                 0
                             )
 
@@ -77,7 +77,7 @@ class MainActivity : ComponentActivity() {
 
                         val openGdl =
                             intent.getBooleanExtra(
-                                AdsbExtras.EXTRA_OPEN_GDL,
+                                ADSBExtras.EXTRA_OPEN_GDL,
                                 true
                             )
 
@@ -100,7 +100,7 @@ class MainActivity : ComponentActivity() {
 
                         val text =
                             intent.getStringExtra(
-                                AdsbExtras.EXTRA_ERROR_TEXT
+                                ADSBExtras.EXTRA_ERROR_TEXT
                             ) ?: ""
 
                         findViewById<TextView>(
@@ -257,12 +257,12 @@ class MainActivity : ComponentActivity() {
                     ADSBActions.ACTION_START
 
                 putExtra(
-                    AdsbExtras.EXTRA_OPEN_GDL,
+                    ADSBExtras.EXTRA_OPEN_GDL,
                     modeSwitch.isChecked
                 )
 
                 putExtra(
-                    AdsbExtras.EXTRA_LOGGING_ENABLED,
+                    ADSBExtras.EXTRA_LOGGING_ENABLED,
                     loggingEnabled
                 )
             }
@@ -287,7 +287,7 @@ class MainActivity : ComponentActivity() {
                     ADSBActions.ACTION_SET_MODE
 
                 putExtra(
-                    AdsbExtras.EXTRA_OPEN_GDL,
+                    ADSBExtras.EXTRA_OPEN_GDL,
                     modeSwitch.isChecked
                 )
             }
@@ -304,7 +304,7 @@ class MainActivity : ComponentActivity() {
                     ADSBActions.ACTION_SET_LOGGING
 
                 putExtra(
-                    AdsbExtras.EXTRA_LOGGING_ENABLED,
+                    ADSBExtras.EXTRA_LOGGING_ENABLED,
                     loggingEnabled
                 )
             }

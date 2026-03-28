@@ -19,12 +19,12 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/icon"
         android:supportsRtl="true"
-        android:theme="@style/Theme.adsbMonitor">
+        android:theme="@style/Theme.ADSBMonitor">
 
         <activity
-            android:name="org.sarangan.adsbmonitor.MainActivity"
+            android:name="org.sarangan.ADSBMonitor.MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.adsbMonitor">
+            android:theme="@style/Theme.ADSBMonitor">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

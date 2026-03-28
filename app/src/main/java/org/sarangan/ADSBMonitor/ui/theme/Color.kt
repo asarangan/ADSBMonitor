@@ -1,4 +1,4 @@
-package org.sarangan.adsbmonitor.ui.theme
+package org.sarangan.ADSBMonitor.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
