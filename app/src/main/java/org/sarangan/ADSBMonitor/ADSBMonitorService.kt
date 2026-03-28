@@ -262,7 +262,7 @@ class ADSBMonitorService : Service() {
             }
             type == 7 -> {
                 recordPacket("uplink")
-                gpxLogger?.queueWeather(packet)
+                gpxLogger?.queueUplink(packet)
             }
             type == 0x4C -> {
                 recordPacket("ahrs")

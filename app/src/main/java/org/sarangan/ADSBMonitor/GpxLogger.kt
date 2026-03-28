@@ -29,7 +29,7 @@ class GpxLogger(private val context: Context) {
     }
 
     private val trafficQueue = ConcurrentLinkedQueue<String>()
-    private val weatherQueue = ConcurrentLinkedQueue<String>()
+    private val uplinkQueue = ConcurrentLinkedQueue<String>()
 
     private var outputStream: OutputStream? = null
     private var uri: Uri? = null
@@ -59,9 +59,9 @@ class GpxLogger(private val context: Context) {
         trafficQueue.add(packet.toHexString())
     }
 
-    fun queueWeather(packet: ByteArray) {
+    fun queueUplink(packet: ByteArray) {
         if (closed) return
-        weatherQueue.add(packet.toHexString())
+        uplinkQueue.add(packet.toHexString())
     }
 
     fun writeOwnshipIfPossible(packet: ByteArray) {
@@ -82,7 +82,7 @@ class GpxLogger(private val context: Context) {
         }.format(Date(fix.timeMillis))
 
         val traffic = drainQueue(trafficQueue)
-        val weather = drainQueue(weatherQueue)
+        val uplink = drainQueue(uplinkQueue)
 
         val sb = StringBuilder()
         sb.append("""      <trkpt lat="${fix.latitude}" lon="${fix.longitude}">""").append('\n')
@@ -97,12 +97,12 @@ class GpxLogger(private val context: Context) {
             sb.append("""          </adsb:traffic>""").append('\n')
         }
 
-        if (weather.isNotEmpty()) {
-            sb.append("""          <adsb:weather count="${weather.size}">""").append('\n')
-            for (pkt in weather) {
+        if (uplink.isNotEmpty()) {
+            sb.append("""          <adsb:uplink count="${uplink.size}">""").append('\n')
+            for (pkt in uplink) {
                 sb.append("""            <adsb:packet>$pkt</adsb:packet>""").append('\n')
             }
-            sb.append("""          </adsb:weather>""").append('\n')
+            sb.append("""          </adsb:uplink>""").append('\n')
         }
 
         sb.append("""        </extensions>""").append('\n')
