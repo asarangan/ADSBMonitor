@@ -48,6 +48,15 @@ class ADSBMonitorService : Service() {
         "uplink" to 0
     )
 
+    private val rejectedCount = mutableMapOf(
+        "ownship_too_short" to 0,
+        "ownship_zero_latlon" to 0,
+        "ownship_invalid_latlon" to 0,
+        "logger_closed" to 0
+    )
+
+    private var lastGpxWriteTimeMs: Long = 0L
+
     private var gpxLogger: GpxLogger? = null
 
     @Volatile
@@ -250,24 +259,99 @@ class ADSBMonitorService : Service() {
 
         val type = packet[1].toInt() and 0xFF
 
-        when {
-            type == 0 -> recordPacket("heartbeat")
-            type == 10 -> {
-                recordPacket("gps")
-                gpxLogger?.writeOwnshipIfPossible(packet)
+        when (type) {
+            0 -> {
+                recordPacket("heartbeat")
+                logPacketDiagnostics("heartbeat")
             }
-            type == 20 -> {
+
+            10 -> {
+                recordPacket("gps")
+
+                val result = gpxLogger?.writeOwnshipIfPossible(packet)
+
+                when (result) {
+                    OwnshipWriteResult.WRITTEN -> {
+                        lastGpxWriteTimeMs = System.currentTimeMillis()
+                    }
+
+                    OwnshipWriteResult.REJECTED_TOO_SHORT -> {
+                        incrementRejected("ownship_too_short")
+                    }
+
+                    OwnshipWriteResult.REJECTED_ZERO_LATLON -> {
+                        incrementRejected("ownship_zero_latlon")
+                    }
+
+                    OwnshipWriteResult.REJECTED_INVALID_LATLON -> {
+                        incrementRejected("ownship_invalid_latlon")
+                    }
+
+                    OwnshipWriteResult.LOGGER_CLOSED -> {
+                        incrementRejected("logger_closed")
+                    }
+
+                    null -> {
+                        incrementRejected("logger_closed")
+                        Log.w(TAG, "gps packet received but gpxLogger is null")
+                    }
+                }
+
+                logPacketDiagnostics("gps")
+            }
+
+            20 -> {
                 recordPacket("traffic")
                 gpxLogger?.queueTraffic(packet)
+                logPacketDiagnostics("traffic")
             }
-            type == 7 -> {
+
+            7 -> {
                 recordPacket("uplink")
                 gpxLogger?.queueUplink(packet)
+                logPacketDiagnostics("uplink")
             }
-            type == 0x4C -> {
+
+            0x4C -> {
                 recordPacket("ahrs")
+                logPacketDiagnostics("ahrs")
+            }
+
+            else -> {
+                Log.d(TAG, "pkt=unknown type=$type len=${packet.size}")
             }
         }
+    }
+
+    private fun incrementRejected(key: String) {
+        rejectedCount[key] = (rejectedCount[key] ?: 0) + 1
+    }
+
+    private fun logPacketDiagnostics(packetType: String) {
+        val heartbeat = packetCount["heartbeat"] ?: 0
+        val gps = packetCount["gps"] ?: 0
+        val traffic = packetCount["traffic"] ?: 0
+        val ahrs = packetCount["ahrs"] ?: 0
+        val uplink = packetCount["uplink"] ?: 0
+
+        val dt = if (lastGpxWriteTimeMs == 0L) {
+            -1L
+        } else {
+            System.currentTimeMillis() - lastGpxWriteTimeMs
+        }
+
+        val dtText = if (dt < 0) "n/a" else "${dt} ms"
+
+        Log.d(
+            TAG,
+            "pkt=$packetType " +
+                    "counts: hb=$heartbeat gps=$gps traffic=$traffic ahrs=$ahrs uplink=$uplink " +
+                    "sinceLastWrite=$dtText " +
+                    "rejected: short=${rejectedCount["ownship_too_short"] ?: 0} " +
+                    "zero=${rejectedCount["ownship_zero_latlon"] ?: 0} " +
+                    "invalid=${rejectedCount["ownship_invalid_latlon"] ?: 0} " +
+                    "loggerClosed=${rejectedCount["logger_closed"] ?: 0}"
+        )
     }
 
     private fun recordPacket(token: String) {

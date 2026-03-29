@@ -22,6 +22,21 @@ data class OwnshipFix(
     val longitude: Double
 )
 
+enum class OwnshipWriteResult {
+    WRITTEN,
+    REJECTED_TOO_SHORT,
+    REJECTED_ZERO_LATLON,
+    REJECTED_INVALID_LATLON,
+    LOGGER_CLOSED
+}
+
+sealed class OwnshipDecodeResult {
+    data class Success(val fix: OwnshipFix) : OwnshipDecodeResult()
+    data object TooShort : OwnshipDecodeResult()
+    data object ZeroLatLon : OwnshipDecodeResult()
+    data object InvalidLatLon : OwnshipDecodeResult()
+}
+
 class GpxLogger(private val context: Context) {
 
     companion object {
@@ -42,9 +57,9 @@ class GpxLogger(private val context: Context) {
             """
             <?xml version="1.0" encoding="UTF-8"?>
             <gpx version="1.1"
-                 creator="ADSBSaver"
+                 creator="ADSBMonitor"
                  xmlns="http://www.topografix.com/GPX/1/1"
-                 xmlns:adsb="https://org.sarangan.adsbsaver/adsb">
+                 xmlns:adsb="https://org.sarangan.ADSBMonitor/adsb">
               <trk>
                 <name>ADS-B Log</name>
                 <trkseg>
@@ -64,10 +79,33 @@ class GpxLogger(private val context: Context) {
         uplinkQueue.add(packet.toHexString())
     }
 
-    fun writeOwnshipIfPossible(packet: ByteArray) {
-        if (closed) return
-        val fix = decodeOwnship(packet) ?: return
-        writeOwnship(fix)
+    fun writeOwnshipIfPossible(packet: ByteArray): OwnshipWriteResult {
+        if (closed) {
+            Log.w(TAG, "writeOwnshipIfPossible called while logger is closed")
+            return OwnshipWriteResult.LOGGER_CLOSED
+        }
+
+        return when (val decoded = decodeOwnship(packet)) {
+            is OwnshipDecodeResult.Success -> {
+                writeOwnship(decoded.fix)
+                OwnshipWriteResult.WRITTEN
+            }
+
+            OwnshipDecodeResult.TooShort -> {
+                Log.w(TAG, "Rejected ownship packet: too short len=${packet.size}")
+                OwnshipWriteResult.REJECTED_TOO_SHORT
+            }
+
+            OwnshipDecodeResult.ZeroLatLon -> {
+                Log.w(TAG, "Rejected ownship packet: zero lat/lon")
+                OwnshipWriteResult.REJECTED_ZERO_LATLON
+            }
+
+            OwnshipDecodeResult.InvalidLatLon -> {
+                Log.w(TAG, "Rejected ownship packet: invalid lat/lon")
+                OwnshipWriteResult.REJECTED_INVALID_LATLON
+            }
+        }
     }
 
     fun getLocationDescription(): String {
@@ -177,32 +215,30 @@ class GpxLogger(private val context: Context) {
         }
     }
 
-    private fun decodeOwnship(packet: ByteArray): OwnshipFix? {
-        if (packet.size < 12) return null
+    private fun decodeOwnship(packet: ByteArray): OwnshipDecodeResult {
+        if (packet.size < 12) return OwnshipDecodeResult.TooShort
 
-        // packet[0] = 0x7E frame flag
-        // packet[1] = message ID
-        // packet[2] = status/address type
-        // packet[3..5] = participant address
-        // packet[6..8] = latitude
-        // packet[9..11] = longitude
         val latRaw = readSigned24(packet, 6)
         val lonRaw = readSigned24(packet, 9)
 
-        if (latRaw == 0 && lonRaw == 0) return null
+        if (latRaw == 0 && lonRaw == 0) {
+            return OwnshipDecodeResult.ZeroLatLon
+        }
 
         val latitude = latRaw * 180.0 / 8388608.0
         val longitude = lonRaw * 180.0 / 8388608.0
 
         if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
             Log.w(TAG, "Ignoring invalid ownship lat/lon: $latitude, $longitude")
-            return null
+            return OwnshipDecodeResult.InvalidLatLon
         }
 
-        return OwnshipFix(
-            timeMillis = System.currentTimeMillis(),
-            latitude = latitude,
-            longitude = longitude
+        return OwnshipDecodeResult.Success(
+            OwnshipFix(
+                timeMillis = System.currentTimeMillis(),
+                latitude = latitude,
+                longitude = longitude
+            )
         )
     }
 
