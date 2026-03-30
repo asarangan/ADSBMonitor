@@ -32,6 +32,7 @@ enum class OwnshipWriteResult {
     REJECTED_ZERO_LATLON,
     REJECTED_INVALID_LATLON,
     REJECTED_UNREASONABLE_JUMP,
+    REJECTED_STARTUP_UNSTABLE,
     LOGGER_CLOSED
 }
 
@@ -47,9 +48,14 @@ class GpxLogger(private val context: Context) {
     companion object {
         private const val TAG = "ADSBMonitor"
 
-        // Conservative spike filters.
+        // Normal running spike filters
         private const val MAX_REASONABLE_SPEED_KTS = 400.0
         private const val MAX_REASONABLE_STEP_METERS = 2000.0
+
+        // Startup stabilization
+        private const val STARTUP_REQUIRED_CLUSTER_POINTS = 3
+        private const val STARTUP_CLUSTER_RADIUS_METERS = 200.0
+        private const val STARTUP_BUFFER_MAX_POINTS = 6
     }
 
     private val trafficQueue = ConcurrentLinkedQueue<String>()
@@ -61,6 +67,7 @@ class GpxLogger(private val context: Context) {
     private var closed = false
 
     private var lastAcceptedFix: OwnshipFix? = null
+    private val startupBuffer = ArrayDeque<OwnshipFix>()
 
     init {
         createOutput()
@@ -100,6 +107,15 @@ class GpxLogger(private val context: Context) {
             is OwnshipDecodeResult.Success -> {
                 val fix = decoded.fix
 
+                // Startup stabilization phase: do not trust the first point blindly.
+                if (lastAcceptedFix == null) {
+                    val startupResult = handleStartupFix(fix)
+                    if (startupResult != OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE) {
+                        return startupResult
+                    }
+                    return OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE
+                }
+
                 if (!isReasonableFix(fix)) {
                     Log.w(
                         TAG,
@@ -134,6 +150,70 @@ class GpxLogger(private val context: Context) {
         absolutePath?.let { return it }
         uri?.let { return it.toString() }
         return "unknown"
+    }
+
+    private fun handleStartupFix(fix: OwnshipFix): OwnshipWriteResult {
+        startupBuffer.addLast(fix)
+        while (startupBuffer.size > STARTUP_BUFFER_MAX_POINTS) {
+            startupBuffer.removeFirst()
+        }
+
+        val anchor = findStartupAnchor()
+        return if (anchor != null) {
+            Log.d(
+                TAG,
+                "Startup stabilized with ${startupBuffer.size} buffered points; anchor lat=${anchor.latitude}, lon=${anchor.longitude}"
+            )
+            writeOwnship(anchor)
+            lastAcceptedFix = anchor
+            startupBuffer.clear()
+            OwnshipWriteResult.WRITTEN
+        } else {
+            Log.d(
+                TAG,
+                "Startup not yet stable: buffered=${startupBuffer.size}, waiting for $STARTUP_REQUIRED_CLUSTER_POINTS points within ${STARTUP_CLUSTER_RADIUS_METERS} m"
+            )
+            OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE
+        }
+    }
+
+    private fun findStartupAnchor(): OwnshipFix? {
+        if (startupBuffer.size < STARTUP_REQUIRED_CLUSTER_POINTS) return null
+
+        val fixes = startupBuffer.toList()
+
+        for (candidate in fixes) {
+            var closeCount = 0
+            for (other in fixes) {
+                val d = haversineMeters(
+                    candidate.latitude,
+                    candidate.longitude,
+                    other.latitude,
+                    other.longitude
+                )
+                if (d <= STARTUP_CLUSTER_RADIUS_METERS) {
+                    closeCount++
+                }
+            }
+
+            if (closeCount >= STARTUP_REQUIRED_CLUSTER_POINTS) {
+                // Use the most recent fix in the cluster as the anchor
+                for (i in fixes.indices.reversed()) {
+                    val f = fixes[i]
+                    val d = haversineMeters(
+                        candidate.latitude,
+                        candidate.longitude,
+                        f.latitude,
+                        f.longitude
+                    )
+                    if (d <= STARTUP_CLUSTER_RADIUS_METERS) {
+                        return f
+                    }
+                }
+            }
+        }
+
+        return null
     }
 
     private fun writeOwnship(fix: OwnshipFix) {
@@ -225,7 +305,6 @@ class GpxLogger(private val context: Context) {
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             resolver.update(newUri, values, null, null)
-
         } else {
             @Suppress("DEPRECATION")
             val publicDocsDir =

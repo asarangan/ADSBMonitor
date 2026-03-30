@@ -53,6 +53,7 @@ class ADSBMonitorService : Service() {
         "ownship_zero_latlon" to 0,
         "ownship_invalid_latlon" to 0,
         "ownship_unreasonable_jump" to 0,
+        "ownship_startup_unstable" to 0,
         "logger_closed" to 0
     )
 
@@ -292,6 +293,10 @@ class ADSBMonitorService : Service() {
                         incrementRejected("ownship_unreasonable_jump")
                     }
 
+                    OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE -> {
+                        incrementRejected("ownship_startup_unstable")
+                    }
+
                     OwnshipWriteResult.LOGGER_CLOSED -> {
                         incrementRejected("logger_closed")
                     }
@@ -339,11 +344,8 @@ class ADSBMonitorService : Service() {
         val ahrs = packetCount["ahrs"] ?: 0
         val uplink = packetCount["uplink"] ?: 0
 
-        val dt = if (lastGpxWriteTimeMs == 0L) {
-            -1L
-        } else {
-            System.currentTimeMillis() - lastGpxWriteTimeMs
-        }
+        val dt = if (lastGpxWriteTimeMs == 0L) -1L
+        else System.currentTimeMillis() - lastGpxWriteTimeMs
 
         val dtText = if (dt < 0) "n/a" else "${dt} ms"
 
@@ -356,6 +358,7 @@ class ADSBMonitorService : Service() {
                     "zero=${rejectedCount["ownship_zero_latlon"] ?: 0} " +
                     "invalid=${rejectedCount["ownship_invalid_latlon"] ?: 0} " +
                     "jump=${rejectedCount["ownship_unreasonable_jump"] ?: 0} " +
+                    "startup=${rejectedCount["ownship_startup_unstable"] ?: 0} " +
                     "loggerClosed=${rejectedCount["logger_closed"] ?: 0}"
         )
     }
