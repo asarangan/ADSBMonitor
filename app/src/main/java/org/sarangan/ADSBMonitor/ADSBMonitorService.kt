@@ -52,6 +52,7 @@ class ADSBMonitorService : Service() {
         "ownship_too_short" to 0,
         "ownship_zero_latlon" to 0,
         "ownship_invalid_latlon" to 0,
+        "ownship_unreasonable_jump" to 0,
         "logger_closed" to 0
     )
 
@@ -287,6 +288,10 @@ class ADSBMonitorService : Service() {
                         incrementRejected("ownship_invalid_latlon")
                     }
 
+                    OwnshipWriteResult.REJECTED_UNREASONABLE_JUMP -> {
+                        incrementRejected("ownship_unreasonable_jump")
+                    }
+
                     OwnshipWriteResult.LOGGER_CLOSED -> {
                         incrementRejected("logger_closed")
                     }
@@ -350,6 +355,7 @@ class ADSBMonitorService : Service() {
                     "rejected: short=${rejectedCount["ownship_too_short"] ?: 0} " +
                     "zero=${rejectedCount["ownship_zero_latlon"] ?: 0} " +
                     "invalid=${rejectedCount["ownship_invalid_latlon"] ?: 0} " +
+                    "jump=${rejectedCount["ownship_unreasonable_jump"] ?: 0} " +
                     "loggerClosed=${rejectedCount["logger_closed"] ?: 0}"
         )
     }

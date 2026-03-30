@@ -15,6 +15,10 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentLinkedQueue
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 data class OwnshipFix(
     val timeMillis: Long,
@@ -27,6 +31,7 @@ enum class OwnshipWriteResult {
     REJECTED_TOO_SHORT,
     REJECTED_ZERO_LATLON,
     REJECTED_INVALID_LATLON,
+    REJECTED_UNREASONABLE_JUMP,
     LOGGER_CLOSED
 }
 
@@ -41,6 +46,10 @@ class GpxLogger(private val context: Context) {
 
     companion object {
         private const val TAG = "ADSBMonitor"
+
+        // Conservative spike filters.
+        private const val MAX_REASONABLE_SPEED_KTS = 400.0
+        private const val MAX_REASONABLE_STEP_METERS = 2000.0
     }
 
     private val trafficQueue = ConcurrentLinkedQueue<String>()
@@ -50,6 +59,8 @@ class GpxLogger(private val context: Context) {
     private var uri: Uri? = null
     private var absolutePath: String? = null
     private var closed = false
+
+    private var lastAcceptedFix: OwnshipFix? = null
 
     init {
         createOutput()
@@ -87,8 +98,19 @@ class GpxLogger(private val context: Context) {
 
         return when (val decoded = decodeOwnship(packet)) {
             is OwnshipDecodeResult.Success -> {
-                writeOwnship(decoded.fix)
-                OwnshipWriteResult.WRITTEN
+                val fix = decoded.fix
+
+                if (!isReasonableFix(fix)) {
+                    Log.w(
+                        TAG,
+                        "Rejected ownship packet: unreasonable jump to lat=${fix.latitude}, lon=${fix.longitude}"
+                    )
+                    OwnshipWriteResult.REJECTED_UNREASONABLE_JUMP
+                } else {
+                    writeOwnship(fix)
+                    lastAcceptedFix = fix
+                    OwnshipWriteResult.WRITTEN
+                }
             }
 
             OwnshipDecodeResult.TooShort -> {
@@ -190,8 +212,10 @@ class GpxLogger(private val context: Context) {
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
 
-            val newUri = resolver.insert(MediaStore.Files.getContentUri("external"), values)
-                ?: throw RuntimeException("Unable to create GPX file in Documents")
+            val newUri = resolver.insert(
+                MediaStore.Files.getContentUri("external"),
+                values
+            ) ?: throw RuntimeException("Unable to create GPX file in Documents")
 
             uri = newUri
 
@@ -201,17 +225,53 @@ class GpxLogger(private val context: Context) {
             values.clear()
             values.put(MediaStore.MediaColumns.IS_PENDING, 0)
             resolver.update(newUri, values, null, null)
+
         } else {
             @Suppress("DEPRECATION")
-            val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            val outDir = File(docsDir, "ADS-B Logs")
-            if (!outDir.exists()) {
-                outDir.mkdirs()
+            val publicDocsDir =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+
+            val publicOutDir = File(publicDocsDir, "ADS-B Logs")
+
+            val publicDirReady = try {
+                publicOutDir.exists() || publicOutDir.mkdirs()
+            } catch (_: Exception) {
+                false
             }
 
-            val outFile = File(outDir, "adsb_log_$ts.gpx")
+            if (publicDirReady) {
+                try {
+                    val outFile = File(publicOutDir, "adsb_log_$ts.gpx")
+                    outputStream = FileOutputStream(outFile, true)
+                    absolutePath = outFile.absolutePath
+                    Log.d(TAG, "Writing GPX to public Documents: $absolutePath")
+                    return
+                } catch (e: Exception) {
+                    Log.w(
+                        TAG,
+                        "Public Documents write failed, falling back to app-specific storage",
+                        e
+                    )
+                }
+            } else {
+                Log.w(
+                    TAG,
+                    "Could not create public Documents/ADS-B Logs, falling back to app-specific storage"
+                )
+            }
+
+            val appDocsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                ?: context.filesDir
+
+            val appOutDir = File(appDocsDir, "ADS-B Logs")
+            if (!appOutDir.exists() && !appOutDir.mkdirs()) {
+                throw RuntimeException("Unable to create fallback GPX directory")
+            }
+
+            val outFile = File(appOutDir, "adsb_log_$ts.gpx")
             outputStream = FileOutputStream(outFile, true)
             absolutePath = outFile.absolutePath
+            Log.d(TAG, "Writing GPX to app-specific Documents: $absolutePath")
         }
     }
 
@@ -240,6 +300,61 @@ class GpxLogger(private val context: Context) {
                 longitude = longitude
             )
         )
+    }
+
+    private fun isReasonableFix(newFix: OwnshipFix): Boolean {
+        val prev = lastAcceptedFix ?: return true
+
+        val dtSec = (newFix.timeMillis - prev.timeMillis) / 1000.0
+        if (dtSec <= 0.0) return true
+
+        val distanceMeters = haversineMeters(
+            prev.latitude,
+            prev.longitude,
+            newFix.latitude,
+            newFix.longitude
+        )
+
+        val speedMps = distanceMeters / dtSec
+        val speedKts = speedMps * 1.94384
+
+        if (distanceMeters > MAX_REASONABLE_STEP_METERS && dtSec <= 2.0) {
+            Log.w(
+                TAG,
+                "Rejected GPS jump: distance=${"%.1f".format(distanceMeters)} m in ${"%.2f".format(dtSec)} s"
+            )
+            return false
+        }
+
+        if (speedKts > MAX_REASONABLE_SPEED_KTS) {
+            Log.w(
+                TAG,
+                "Rejected GPS jump: implied speed=${"%.1f".format(speedKts)} kt " +
+                        "from (${prev.latitude}, ${prev.longitude}) to (${newFix.latitude}, ${newFix.longitude})"
+            )
+            return false
+        }
+
+        return true
+    }
+
+    private fun haversineMeters(
+        lat1: Double,
+        lon1: Double,
+        lat2: Double,
+        lon2: Double
+    ): Double {
+        val r = 6371000.0
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(Math.toRadians(lat1)) *
+                cos(Math.toRadians(lat2)) *
+                sin(dLon / 2) * sin(dLon / 2)
+
+        val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
+        return r * c
     }
 
     private fun readSigned24(bytes: ByteArray, start: Int): Int {
