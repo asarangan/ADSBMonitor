@@ -54,6 +54,7 @@ class ADSBMonitorService : Service() {
         "ownship_invalid_latlon" to 0,
         "ownship_unreasonable_jump" to 0,
         "ownship_startup_unstable" to 0,
+        "ownship_no_last_fix" to 0,
         "logger_closed" to 0
     )
 
@@ -273,7 +274,8 @@ class ADSBMonitorService : Service() {
                 val result = gpxLogger?.writeOwnshipIfPossible(packet)
 
                 when (result) {
-                    OwnshipWriteResult.WRITTEN -> {
+                    OwnshipWriteResult.WRITTEN,
+                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX -> {
                         lastGpxWriteTimeMs = System.currentTimeMillis()
                     }
 
@@ -297,6 +299,10 @@ class ADSBMonitorService : Service() {
                         incrementRejected("ownship_startup_unstable")
                     }
 
+                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
+                        incrementRejected("ownship_no_last_fix")
+                    }
+
                     OwnshipWriteResult.LOGGER_CLOSED -> {
                         incrementRejected("logger_closed")
                     }
@@ -313,12 +319,62 @@ class ADSBMonitorService : Service() {
             20 -> {
                 recordPacket("traffic")
                 gpxLogger?.queueTraffic(packet)
+
+                val result = gpxLogger?.writeUsingLastFixIfPossible()
+                when (result) {
+                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX,
+                    OwnshipWriteResult.WRITTEN -> {
+                        lastGpxWriteTimeMs = System.currentTimeMillis()
+                    }
+
+                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
+                        incrementRejected("ownship_no_last_fix")
+                    }
+
+                    OwnshipWriteResult.LOGGER_CLOSED -> {
+                        incrementRejected("logger_closed")
+                    }
+
+                    null -> {
+                        incrementRejected("logger_closed")
+                        Log.w(TAG, "traffic packet received but gpxLogger is null")
+                    }
+
+                    else -> {
+                    }
+                }
+
                 logPacketDiagnostics("traffic")
             }
 
             7 -> {
                 recordPacket("uplink")
                 gpxLogger?.queueUplink(packet)
+
+                val result = gpxLogger?.writeUsingLastFixIfPossible()
+                when (result) {
+                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX,
+                    OwnshipWriteResult.WRITTEN -> {
+                        lastGpxWriteTimeMs = System.currentTimeMillis()
+                    }
+
+                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
+                        incrementRejected("ownship_no_last_fix")
+                    }
+
+                    OwnshipWriteResult.LOGGER_CLOSED -> {
+                        incrementRejected("logger_closed")
+                    }
+
+                    null -> {
+                        incrementRejected("logger_closed")
+                        Log.w(TAG, "uplink packet received but gpxLogger is null")
+                    }
+
+                    else -> {
+                    }
+                }
+
                 logPacketDiagnostics("uplink")
             }
 
@@ -359,6 +415,7 @@ class ADSBMonitorService : Service() {
                     "invalid=${rejectedCount["ownship_invalid_latlon"] ?: 0} " +
                     "jump=${rejectedCount["ownship_unreasonable_jump"] ?: 0} " +
                     "startup=${rejectedCount["ownship_startup_unstable"] ?: 0} " +
+                    "noLastFix=${rejectedCount["ownship_no_last_fix"] ?: 0} " +
                     "loggerClosed=${rejectedCount["logger_closed"] ?: 0}"
         )
     }

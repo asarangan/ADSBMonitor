@@ -28,11 +28,13 @@ data class OwnshipFix(
 
 enum class OwnshipWriteResult {
     WRITTEN,
+    WRITTEN_FROM_LAST_FIX,
     REJECTED_TOO_SHORT,
     REJECTED_ZERO_LATLON,
     REJECTED_INVALID_LATLON,
     REJECTED_UNREASONABLE_JUMP,
     REJECTED_STARTUP_UNSTABLE,
+    REJECTED_NO_LAST_FIX,
     LOGGER_CLOSED
 }
 
@@ -48,11 +50,9 @@ class GpxLogger(private val context: Context) {
     companion object {
         private const val TAG = "ADSBMonitor"
 
-        // Normal running spike filters
         private const val MAX_REASONABLE_SPEED_KTS = 400.0
         private const val MAX_REASONABLE_STEP_METERS = 2000.0
 
-        // Startup stabilization
         private const val STARTUP_REQUIRED_CLUSTER_POINTS = 3
         private const val STARTUP_CLUSTER_RADIUS_METERS = 200.0
         private const val STARTUP_BUFFER_MAX_POINTS = 6
@@ -107,7 +107,6 @@ class GpxLogger(private val context: Context) {
             is OwnshipDecodeResult.Success -> {
                 val fix = decoded.fix
 
-                // Startup stabilization phase: do not trust the first point blindly.
                 if (lastAcceptedFix == null) {
                     val startupResult = handleStartupFix(fix)
                     if (startupResult != OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE) {
@@ -123,7 +122,7 @@ class GpxLogger(private val context: Context) {
                     )
                     OwnshipWriteResult.REJECTED_UNREASONABLE_JUMP
                 } else {
-                    writeOwnship(fix)
+                    writeTrackPoint(fix)
                     lastAcceptedFix = fix
                     OwnshipWriteResult.WRITTEN
                 }
@@ -146,6 +145,23 @@ class GpxLogger(private val context: Context) {
         }
     }
 
+    fun writeUsingLastFixIfPossible(): OwnshipWriteResult {
+        if (closed) {
+            Log.w(TAG, "writeUsingLastFixIfPossible called while logger is closed")
+            return OwnshipWriteResult.LOGGER_CLOSED
+        }
+
+        val fix = lastAcceptedFix
+        if (fix == null) {
+            Log.d(TAG, "No last accepted GPS fix yet; skipping write from traffic/uplink")
+            return OwnshipWriteResult.REJECTED_NO_LAST_FIX
+        }
+
+        val syntheticFix = fix.copy(timeMillis = System.currentTimeMillis())
+        writeTrackPoint(syntheticFix)
+        return OwnshipWriteResult.WRITTEN_FROM_LAST_FIX
+    }
+
     fun getLocationDescription(): String {
         absolutePath?.let { return it }
         uri?.let { return it.toString() }
@@ -164,7 +180,7 @@ class GpxLogger(private val context: Context) {
                 TAG,
                 "Startup stabilized with ${startupBuffer.size} buffered points; anchor lat=${anchor.latitude}, lon=${anchor.longitude}"
             )
-            writeOwnship(anchor)
+            writeTrackPoint(anchor)
             lastAcceptedFix = anchor
             startupBuffer.clear()
             OwnshipWriteResult.WRITTEN
@@ -197,7 +213,6 @@ class GpxLogger(private val context: Context) {
             }
 
             if (closeCount >= STARTUP_REQUIRED_CLUSTER_POINTS) {
-                // Use the most recent fix in the cluster as the anchor
                 for (i in fixes.indices.reversed()) {
                     val f = fixes[i]
                     val d = haversineMeters(
@@ -216,7 +231,7 @@ class GpxLogger(private val context: Context) {
         return null
     }
 
-    private fun writeOwnship(fix: OwnshipFix) {
+    private fun writeTrackPoint(fix: OwnshipFix) {
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }.format(Date(fix.timeMillis))
