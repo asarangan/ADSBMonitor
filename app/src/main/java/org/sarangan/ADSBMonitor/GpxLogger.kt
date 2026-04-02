@@ -14,11 +14,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
-import java.util.concurrent.ConcurrentLinkedQueue
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 data class OwnshipFix(
     val timeMillis: Long,
@@ -28,46 +23,29 @@ data class OwnshipFix(
 
 enum class OwnshipWriteResult {
     WRITTEN,
-    WRITTEN_FROM_LAST_FIX,
     REJECTED_TOO_SHORT,
-    REJECTED_ZERO_LATLON,
     REJECTED_INVALID_LATLON,
-    REJECTED_UNREASONABLE_JUMP,
-    REJECTED_STARTUP_UNSTABLE,
-    REJECTED_NO_LAST_FIX,
     LOGGER_CLOSED
 }
 
 sealed class OwnshipDecodeResult {
     data class Success(val fix: OwnshipFix) : OwnshipDecodeResult()
     data object TooShort : OwnshipDecodeResult()
-    data object ZeroLatLon : OwnshipDecodeResult()
     data object InvalidLatLon : OwnshipDecodeResult()
 }
 
-class GpxLogger(private val context: Context) {
+class GpxLogger(
+    private val context: Context
+) {
 
     companion object {
         private const val TAG = "ADSBMonitor"
-
-        private const val MAX_REASONABLE_SPEED_KTS = 400.0
-        private const val MAX_REASONABLE_STEP_METERS = 2000.0
-
-        private const val STARTUP_REQUIRED_CLUSTER_POINTS = 3
-        private const val STARTUP_CLUSTER_RADIUS_METERS = 200.0
-        private const val STARTUP_BUFFER_MAX_POINTS = 6
     }
-
-    private val trafficQueue = ConcurrentLinkedQueue<String>()
-    private val uplinkQueue = ConcurrentLinkedQueue<String>()
 
     private var outputStream: OutputStream? = null
     private var uri: Uri? = null
     private var absolutePath: String? = null
     private var closed = false
-
-    private var lastAcceptedFix: OwnshipFix? = null
-    private val startupBuffer = ArrayDeque<OwnshipFix>()
 
     init {
         createOutput()
@@ -87,16 +65,6 @@ class GpxLogger(private val context: Context) {
         Log.d(TAG, "GPX log file created: ${getLocationDescription()}")
     }
 
-    fun queueTraffic(packet: ByteArray) {
-        if (closed) return
-        trafficQueue.add(packet.toHexString())
-    }
-
-    fun queueUplink(packet: ByteArray) {
-        if (closed) return
-        uplinkQueue.add(packet.toHexString())
-    }
-
     fun writeOwnshipIfPossible(packet: ByteArray): OwnshipWriteResult {
         if (closed) {
             Log.w(TAG, "writeOwnshipIfPossible called while logger is closed")
@@ -105,37 +73,13 @@ class GpxLogger(private val context: Context) {
 
         return when (val decoded = decodeOwnship(packet)) {
             is OwnshipDecodeResult.Success -> {
-                val fix = decoded.fix
-
-                if (lastAcceptedFix == null) {
-                    val startupResult = handleStartupFix(fix)
-                    if (startupResult != OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE) {
-                        return startupResult
-                    }
-                    return OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE
-                }
-
-                if (!isReasonableFix(fix)) {
-                    Log.w(
-                        TAG,
-                        "Rejected ownship packet: unreasonable jump to lat=${fix.latitude}, lon=${fix.longitude}"
-                    )
-                    OwnshipWriteResult.REJECTED_UNREASONABLE_JUMP
-                } else {
-                    writeTrackPoint(fix)
-                    lastAcceptedFix = fix
-                    OwnshipWriteResult.WRITTEN
-                }
+                writeTrackPoint(decoded.fix)
+                OwnshipWriteResult.WRITTEN
             }
 
             OwnshipDecodeResult.TooShort -> {
                 Log.w(TAG, "Rejected ownship packet: too short len=${packet.size}")
                 OwnshipWriteResult.REJECTED_TOO_SHORT
-            }
-
-            OwnshipDecodeResult.ZeroLatLon -> {
-                Log.w(TAG, "Rejected ownship packet: zero lat/lon")
-                OwnshipWriteResult.REJECTED_ZERO_LATLON
             }
 
             OwnshipDecodeResult.InvalidLatLon -> {
@@ -145,21 +89,20 @@ class GpxLogger(private val context: Context) {
         }
     }
 
-    fun writeUsingLastFixIfPossible(): OwnshipWriteResult {
+    fun writeTrafficEvent(packet: ByteArray) {
         if (closed) {
-            Log.w(TAG, "writeUsingLastFixIfPossible called while logger is closed")
-            return OwnshipWriteResult.LOGGER_CLOSED
+            Log.w(TAG, "writeTrafficEvent called while logger is closed")
+            return
         }
+        writeEvent("traffic", packet)
+    }
 
-        val fix = lastAcceptedFix
-        if (fix == null) {
-            Log.d(TAG, "No last accepted GPS fix yet; skipping write from traffic/uplink")
-            return OwnshipWriteResult.REJECTED_NO_LAST_FIX
+    fun writeUplinkEvent(packet: ByteArray) {
+        if (closed) {
+            Log.w(TAG, "writeUplinkEvent called while logger is closed")
+            return
         }
-
-        val syntheticFix = fix.copy(timeMillis = System.currentTimeMillis())
-        writeTrackPoint(syntheticFix)
-        return OwnshipWriteResult.WRITTEN_FROM_LAST_FIX
+        writeEvent("uplink", packet)
     }
 
     fun getLocationDescription(): String {
@@ -168,102 +111,35 @@ class GpxLogger(private val context: Context) {
         return "unknown"
     }
 
-    private fun handleStartupFix(fix: OwnshipFix): OwnshipWriteResult {
-        startupBuffer.addLast(fix)
-        while (startupBuffer.size > STARTUP_BUFFER_MAX_POINTS) {
-            startupBuffer.removeFirst()
-        }
-
-        val anchor = findStartupAnchor()
-        return if (anchor != null) {
-            Log.d(
-                TAG,
-                "Startup stabilized with ${startupBuffer.size} buffered points; anchor lat=${anchor.latitude}, lon=${anchor.longitude}"
-            )
-            writeTrackPoint(anchor)
-            lastAcceptedFix = anchor
-            startupBuffer.clear()
-            OwnshipWriteResult.WRITTEN
-        } else {
-            Log.d(
-                TAG,
-                "Startup not yet stable: buffered=${startupBuffer.size}, waiting for $STARTUP_REQUIRED_CLUSTER_POINTS points within ${STARTUP_CLUSTER_RADIUS_METERS} m"
-            )
-            OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE
-        }
-    }
-
-    private fun findStartupAnchor(): OwnshipFix? {
-        if (startupBuffer.size < STARTUP_REQUIRED_CLUSTER_POINTS) return null
-
-        val fixes = startupBuffer.toList()
-
-        for (candidate in fixes) {
-            var closeCount = 0
-            for (other in fixes) {
-                val d = haversineMeters(
-                    candidate.latitude,
-                    candidate.longitude,
-                    other.latitude,
-                    other.longitude
-                )
-                if (d <= STARTUP_CLUSTER_RADIUS_METERS) {
-                    closeCount++
-                }
-            }
-
-            if (closeCount >= STARTUP_REQUIRED_CLUSTER_POINTS) {
-                for (i in fixes.indices.reversed()) {
-                    val f = fixes[i]
-                    val d = haversineMeters(
-                        candidate.latitude,
-                        candidate.longitude,
-                        f.latitude,
-                        f.longitude
-                    )
-                    if (d <= STARTUP_CLUSTER_RADIUS_METERS) {
-                        return f
-                    }
-                }
-            }
-        }
-
-        return null
-    }
-
     private fun writeTrackPoint(fix: OwnshipFix) {
-        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-        }.format(Date(fix.timeMillis))
-
-        val traffic = drainQueue(trafficQueue)
-        val uplink = drainQueue(uplinkQueue)
+        val iso = isoTime(fix.timeMillis)
 
         val sb = StringBuilder()
         sb.append("""      <trkpt lat="${fix.latitude}" lon="${fix.longitude}">""").append('\n')
         sb.append("""        <time>$iso</time>""").append('\n')
-        sb.append("""        <extensions>""").append('\n')
-
-        if (traffic.isNotEmpty()) {
-            sb.append("""          <adsb:traffic count="${traffic.size}">""").append('\n')
-            for (pkt in traffic) {
-                sb.append("""            <adsb:packet>$pkt</adsb:packet>""").append('\n')
-            }
-            sb.append("""          </adsb:traffic>""").append('\n')
-        }
-
-        if (uplink.isNotEmpty()) {
-            sb.append("""          <adsb:uplink count="${uplink.size}">""").append('\n')
-            for (pkt in uplink) {
-                sb.append("""            <adsb:packet>$pkt</adsb:packet>""").append('\n')
-            }
-            sb.append("""          </adsb:uplink>""").append('\n')
-        }
-
-        sb.append("""        </extensions>""").append('\n')
         sb.append("""      </trkpt>""").append('\n')
 
         write(sb.toString())
+    }
+
+    private fun writeEvent(type: String, packet: ByteArray) {
+        val iso = isoTime(System.currentTimeMillis())
+        val hex = packet.toHexString()
+
+        val sb = StringBuilder()
+        sb.append("""      <extensions>""").append('\n')
+        sb.append("""        <adsb:event time="$iso" type="$type">""").append('\n')
+        sb.append("""          <adsb:packet>$hex</adsb:packet>""").append('\n')
+        sb.append("""        </adsb:event>""").append('\n')
+        sb.append("""      </extensions>""").append('\n')
+
+        write(sb.toString())
+    }
+
+    private fun isoTime(timeMillis: Long): String {
+        return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(Date(timeMillis))
     }
 
     fun close() {
@@ -375,10 +251,6 @@ class GpxLogger(private val context: Context) {
         val latRaw = readSigned24(packet, 6)
         val lonRaw = readSigned24(packet, 9)
 
-        if (latRaw == 0 && lonRaw == 0) {
-            return OwnshipDecodeResult.ZeroLatLon
-        }
-
         val latitude = latRaw * 180.0 / 8388608.0
         val longitude = lonRaw * 180.0 / 8388608.0
 
@@ -396,61 +268,6 @@ class GpxLogger(private val context: Context) {
         )
     }
 
-    private fun isReasonableFix(newFix: OwnshipFix): Boolean {
-        val prev = lastAcceptedFix ?: return true
-
-        val dtSec = (newFix.timeMillis - prev.timeMillis) / 1000.0
-        if (dtSec <= 0.0) return true
-
-        val distanceMeters = haversineMeters(
-            prev.latitude,
-            prev.longitude,
-            newFix.latitude,
-            newFix.longitude
-        )
-
-        val speedMps = distanceMeters / dtSec
-        val speedKts = speedMps * 1.94384
-
-        if (distanceMeters > MAX_REASONABLE_STEP_METERS && dtSec <= 2.0) {
-            Log.w(
-                TAG,
-                "Rejected GPS jump: distance=${"%.1f".format(distanceMeters)} m in ${"%.2f".format(dtSec)} s"
-            )
-            return false
-        }
-
-        if (speedKts > MAX_REASONABLE_SPEED_KTS) {
-            Log.w(
-                TAG,
-                "Rejected GPS jump: implied speed=${"%.1f".format(speedKts)} kt " +
-                        "from (${prev.latitude}, ${prev.longitude}) to (${newFix.latitude}, ${newFix.longitude})"
-            )
-            return false
-        }
-
-        return true
-    }
-
-    private fun haversineMeters(
-        lat1: Double,
-        lon1: Double,
-        lat2: Double,
-        lon2: Double
-    ): Double {
-        val r = 6371000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-                cos(Math.toRadians(lat1)) *
-                cos(Math.toRadians(lat2)) *
-                sin(dLon / 2) * sin(dLon / 2)
-
-        val c = 2.0 * atan2(sqrt(a), sqrt(1.0 - a))
-        return r * c
-    }
-
     private fun readSigned24(bytes: ByteArray, start: Int): Int {
         if (start + 2 >= bytes.size) return 0
 
@@ -464,15 +281,6 @@ class GpxLogger(private val context: Context) {
         }
 
         return value
-    }
-
-    private fun drainQueue(queue: ConcurrentLinkedQueue<String>): List<String> {
-        val out = mutableListOf<String>()
-        while (true) {
-            val item = queue.poll() ?: break
-            out.add(item)
-        }
-        return out
     }
 
     private fun write(text: String) {

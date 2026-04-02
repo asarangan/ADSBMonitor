@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -40,6 +41,8 @@ class ADSBMonitorService : Service() {
     private var workerThread: Thread? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
+    private var gpxLogger: GpxLogger? = null
+
     private val packetCount = mutableMapOf(
         "heartbeat" to 0,
         "gps" to 0,
@@ -47,20 +50,6 @@ class ADSBMonitorService : Service() {
         "ahrs" to 0,
         "uplink" to 0
     )
-
-    private val rejectedCount = mutableMapOf(
-        "ownship_too_short" to 0,
-        "ownship_zero_latlon" to 0,
-        "ownship_invalid_latlon" to 0,
-        "ownship_unreasonable_jump" to 0,
-        "ownship_startup_unstable" to 0,
-        "ownship_no_last_fix" to 0,
-        "logger_closed" to 0
-    )
-
-    private var lastGpxWriteTimeMs: Long = 0L
-
-    private var gpxLogger: GpxLogger? = null
 
     @Volatile
     private var cleanedUp = false
@@ -83,8 +72,6 @@ class ADSBMonitorService : Service() {
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     else 0
                 )
-
-                Log.d(TAG, "Foreground notification started")
 
                 openGdlMode = intent.getBooleanExtra(ADSBExtras.EXTRA_OPEN_GDL, true)
                 loggingEnabled = intent.getBooleanExtra(ADSBExtras.EXTRA_LOGGING_ENABLED, false)
@@ -214,8 +201,6 @@ class ADSBMonitorService : Service() {
             }
         }
 
-        Log.d(TAG, "broadcastAddress=${broadcastAddress?.hostAddress}")
-
         setLogging(loggingEnabled)
 
         workerThread = thread(start = true, name = "adsb-monitor-thread") {
@@ -237,14 +222,14 @@ class ADSBMonitorService : Service() {
             broadcastStatus()
             updateNotification()
 
-            val buffer = ByteArray(2048)
+            val buffer = ByteArray(4096)
 
             while (running) {
                 try {
                     val packet = DatagramPacket(buffer, buffer.size)
                     socketIn?.receive(packet)
                     val bytes = packet.data.copyOf(packet.length)
-                    processPacket(bytes)
+                    processDatagram(bytes)
                 } catch (_: SocketTimeoutException) {
                 } catch (e: Exception) {
                     if (running) {
@@ -256,168 +241,128 @@ class ADSBMonitorService : Service() {
         }
     }
 
-    private fun processPacket(packet: ByteArray) {
-        if (packet.size < 2) return
-        if ((packet[0].toInt() and 0xFF) != 0x7E) return
+    private fun processDatagram(datagram: ByteArray) {
+        val frames = extractGdl90Frames(datagram)
+        if (frames.isEmpty()) return
 
-        val type = packet[1].toInt() and 0xFF
+        for (frame in frames) {
+            processFrame(frame)
+        }
+    }
+
+    private fun processFrame(framePayload: ByteArray) {
+        if (framePayload.isEmpty()) return
+
+        val type = framePayload[0].toInt() and 0xFF
+
+        val logicalPacket = ByteArray(framePayload.size + 1)
+        logicalPacket[0] = 0x7E.toByte()
+        System.arraycopy(framePayload, 0, logicalPacket, 1, framePayload.size)
 
         when (type) {
             0 -> {
                 recordPacket("heartbeat")
-                logPacketDiagnostics("heartbeat")
             }
 
             10 -> {
                 recordPacket("gps")
 
-                val result = gpxLogger?.writeOwnshipIfPossible(packet)
-
-                when (result) {
-                    OwnshipWriteResult.WRITTEN,
-                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX -> {
-                        lastGpxWriteTimeMs = System.currentTimeMillis()
-                    }
-
-                    OwnshipWriteResult.REJECTED_TOO_SHORT -> {
-                        incrementRejected("ownship_too_short")
-                    }
-
-                    OwnshipWriteResult.REJECTED_ZERO_LATLON -> {
-                        incrementRejected("ownship_zero_latlon")
-                    }
-
-                    OwnshipWriteResult.REJECTED_INVALID_LATLON -> {
-                        incrementRejected("ownship_invalid_latlon")
-                    }
-
-                    OwnshipWriteResult.REJECTED_UNREASONABLE_JUMP -> {
-                        incrementRejected("ownship_unreasonable_jump")
-                    }
-
-                    OwnshipWriteResult.REJECTED_STARTUP_UNSTABLE -> {
-                        incrementRejected("ownship_startup_unstable")
-                    }
-
-                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
-                        incrementRejected("ownship_no_last_fix")
-                    }
-
+                when (val result = gpxLogger?.writeOwnshipIfPossible(logicalPacket)) {
+                    OwnshipWriteResult.REJECTED_TOO_SHORT,
+                    OwnshipWriteResult.REJECTED_INVALID_LATLON,
                     OwnshipWriteResult.LOGGER_CLOSED -> {
-                        incrementRejected("logger_closed")
+                        Log.w(TAG, "Bad GPS ownship packet: ${result.name}")
                     }
 
                     null -> {
-                        incrementRejected("logger_closed")
-                        Log.w(TAG, "gps packet received but gpxLogger is null")
+                        Log.w(TAG, "gps frame received but gpxLogger is null")
+                    }
+
+                    else -> {
+                        // normal ownship write
                     }
                 }
-
-                logPacketDiagnostics("gps")
             }
 
             20 -> {
                 recordPacket("traffic")
-                gpxLogger?.queueTraffic(packet)
-
-                val result = gpxLogger?.writeUsingLastFixIfPossible()
-                when (result) {
-                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX,
-                    OwnshipWriteResult.WRITTEN -> {
-                        lastGpxWriteTimeMs = System.currentTimeMillis()
-                    }
-
-                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
-                        incrementRejected("ownship_no_last_fix")
-                    }
-
-                    OwnshipWriteResult.LOGGER_CLOSED -> {
-                        incrementRejected("logger_closed")
-                    }
-
-                    null -> {
-                        incrementRejected("logger_closed")
-                        Log.w(TAG, "traffic packet received but gpxLogger is null")
-                    }
-
-                    else -> {
-                    }
-                }
-
-                logPacketDiagnostics("traffic")
+                gpxLogger?.writeTrafficEvent(logicalPacket)
             }
 
             7 -> {
                 recordPacket("uplink")
-                gpxLogger?.queueUplink(packet)
-
-                val result = gpxLogger?.writeUsingLastFixIfPossible()
-                when (result) {
-                    OwnshipWriteResult.WRITTEN_FROM_LAST_FIX,
-                    OwnshipWriteResult.WRITTEN -> {
-                        lastGpxWriteTimeMs = System.currentTimeMillis()
-                    }
-
-                    OwnshipWriteResult.REJECTED_NO_LAST_FIX -> {
-                        incrementRejected("ownship_no_last_fix")
-                    }
-
-                    OwnshipWriteResult.LOGGER_CLOSED -> {
-                        incrementRejected("logger_closed")
-                    }
-
-                    null -> {
-                        incrementRejected("logger_closed")
-                        Log.w(TAG, "uplink packet received but gpxLogger is null")
-                    }
-
-                    else -> {
-                    }
-                }
-
-                logPacketDiagnostics("uplink")
+                gpxLogger?.writeUplinkEvent(logicalPacket)
             }
 
             0x4C -> {
                 recordPacket("ahrs")
-                logPacketDiagnostics("ahrs")
+            }
+
+            11, 83, 101, 204 -> {
+                // Known non-ownship / vendor / status frames; ignore silently
             }
 
             else -> {
-                Log.d(TAG, "pkt=unknown type=$type len=${packet.size}")
+                Log.d(
+                    TAG,
+                    "Unknown frame type=$type payloadLen=${framePayload.size} hex=${framePayload.toHexString()}"
+                )
             }
         }
     }
 
-    private fun incrementRejected(key: String) {
-        rejectedCount[key] = (rejectedCount[key] ?: 0) + 1
+    private fun extractGdl90Frames(datagram: ByteArray): List<ByteArray> {
+        val frames = mutableListOf<ByteArray>()
+        var inFrame = false
+        var frameBuffer = ByteArrayOutputStream()
+
+        for (b in datagram) {
+            val ub = b.toInt() and 0xFF
+
+            if (ub == 0x7E) {
+                if (inFrame) {
+                    val rawFrame = frameBuffer.toByteArray()
+                    if (rawFrame.isNotEmpty()) {
+                        val deescaped = deescapeGdl90(rawFrame)
+                        if (deescaped.isNotEmpty()) {
+                            frames.add(deescaped)
+                        }
+                    }
+                    frameBuffer.reset()
+                } else {
+                    inFrame = true
+                    frameBuffer.reset()
+                }
+            } else if (inFrame) {
+                frameBuffer.write(ub)
+            }
+        }
+
+        return frames
     }
 
-    private fun logPacketDiagnostics(packetType: String) {
-        val heartbeat = packetCount["heartbeat"] ?: 0
-        val gps = packetCount["gps"] ?: 0
-        val traffic = packetCount["traffic"] ?: 0
-        val ahrs = packetCount["ahrs"] ?: 0
-        val uplink = packetCount["uplink"] ?: 0
+    private fun deescapeGdl90(rawFrame: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        var i = 0
 
-        val dt = if (lastGpxWriteTimeMs == 0L) -1L
-        else System.currentTimeMillis() - lastGpxWriteTimeMs
+        while (i < rawFrame.size) {
+            val b = rawFrame[i].toInt() and 0xFF
+            if (b == 0x7D) {
+                if (i + 1 < rawFrame.size) {
+                    val next = rawFrame[i + 1].toInt() and 0xFF
+                    out.write(next xor 0x20)
+                    i += 2
+                } else {
+                    Log.w(TAG, "Dangling GDL90 escape byte at end of frame")
+                    break
+                }
+            } else {
+                out.write(b)
+                i++
+            }
+        }
 
-        val dtText = if (dt < 0) "n/a" else "${dt} ms"
-
-        Log.d(
-            TAG,
-            "pkt=$packetType " +
-                    "counts: hb=$heartbeat gps=$gps traffic=$traffic ahrs=$ahrs uplink=$uplink " +
-                    "sinceLastWrite=$dtText " +
-                    "rejected: short=${rejectedCount["ownship_too_short"] ?: 0} " +
-                    "zero=${rejectedCount["ownship_zero_latlon"] ?: 0} " +
-                    "invalid=${rejectedCount["ownship_invalid_latlon"] ?: 0} " +
-                    "jump=${rejectedCount["ownship_unreasonable_jump"] ?: 0} " +
-                    "startup=${rejectedCount["ownship_startup_unstable"] ?: 0} " +
-                    "noLastFix=${rejectedCount["ownship_no_last_fix"] ?: 0} " +
-                    "loggerClosed=${rejectedCount["logger_closed"] ?: 0}"
-        )
+        return out.toByteArray()
     }
 
     private fun recordPacket(token: String) {
@@ -480,25 +425,12 @@ class ADSBMonitorService : Service() {
             }
 
             val target = broadcastAddress ?: InetAddress.getByName("255.255.255.255")
-
-            Log.d(TAG, "sendModePacket: target=${target.hostAddress} port=$STRATUS_PORT bytes=${sendData.size}")
-            Log.d(TAG, "sendModePacket: wifi connected=${isWifiConnected()} broadcast=${outSocket.broadcast}")
-
             val packet = DatagramPacket(sendData, sendData.size, target, STRATUS_PORT)
             outSocket.send(packet)
-
-            Log.d(TAG, "sendModePacket: success")
         } catch (e: Exception) {
             Log.e(TAG, "sendModePacket failed: ${e::class.java.name}: $e", e)
             broadcastError("Unable to send Stratus mode packet: ${e::class.java.simpleName}")
         }
-    }
-
-    private fun isWifiConnected(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)
     }
 
     private fun createNotificationChannel() {
@@ -546,4 +478,7 @@ class ADSBMonitorService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildNotification(text))
     }
+
+    private fun ByteArray.toHexString(): String =
+        joinToString("") { "%02X".format(it.toInt() and 0xFF) }
 }

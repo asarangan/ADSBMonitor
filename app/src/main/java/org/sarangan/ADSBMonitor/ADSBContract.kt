@@ -38,6 +38,7 @@ object ADSBActions {
 object ADSBExtras {
     const val EXTRA_OPEN_GDL = "open_gdl"
     const val EXTRA_LOGGING_ENABLED = "logging_enabled"
+    const val EXTRA_ENABLE_PACKET_REJECTION = "enable_packet_rejection"
 
     const val EXTRA_PACKET_TYPE = "packet_type"
     const val EXTRA_COUNT = "count"
