@@ -255,9 +255,10 @@ class ADSBMonitorService : Service() {
 
         val type = framePayload[0].toInt() and 0xFF
 
-        val logicalPacket = ByteArray(framePayload.size + 1)
+        val logicalPacket = ByteArray(framePayload.size + 2)
         logicalPacket[0] = 0x7E.toByte()
         System.arraycopy(framePayload, 0, logicalPacket, 1, framePayload.size)
+        logicalPacket[logicalPacket.size - 1] = 0x7E.toByte()
 
         when (type) {
             0 -> {
@@ -279,9 +280,12 @@ class ADSBMonitorService : Service() {
                     }
 
                     else -> {
-                        // normal ownship write
                     }
                 }
+            }
+
+            11 -> {
+                gpxLogger?.writeOwnshipGeoAltitudeEvent(logicalPacket)
             }
 
             20 -> {
@@ -298,8 +302,8 @@ class ADSBMonitorService : Service() {
                 recordPacket("ahrs")
             }
 
-            11, 83, 101, 204 -> {
-                // Known non-ownship / vendor / status frames; ignore silently
+            83, 101, 204 -> {
+                // Known vendor / status frames; ignore silently
             }
 
             else -> {

@@ -18,7 +18,8 @@ import java.util.TimeZone
 data class OwnshipFix(
     val timeMillis: Long,
     val latitude: Double,
-    val longitude: Double
+    val longitude: Double,
+    val elevationMeters: Double? = null
 )
 
 enum class OwnshipWriteResult {
@@ -89,6 +90,14 @@ class GpxLogger(
         }
     }
 
+    fun writeOwnshipGeoAltitudeEvent(packet: ByteArray) {
+        if (closed) {
+            Log.w(TAG, "writeOwnshipGeoAltitudeEvent called while logger is closed")
+            return
+        }
+        writeEvent("ownship_geo_altitude", packet)
+    }
+
     fun writeTrafficEvent(packet: ByteArray) {
         if (closed) {
             Log.w(TAG, "writeTrafficEvent called while logger is closed")
@@ -116,6 +125,11 @@ class GpxLogger(
 
         val sb = StringBuilder()
         sb.append("""      <trkpt lat="${fix.latitude}" lon="${fix.longitude}">""").append('\n')
+
+        fix.elevationMeters?.let {
+            sb.append("""        <ele>$it</ele>""").append('\n')
+        }
+
         sb.append("""        <time>$iso</time>""").append('\n')
         sb.append("""      </trkpt>""").append('\n')
 
@@ -246,7 +260,23 @@ class GpxLogger(
     }
 
     private fun decodeOwnship(packet: ByteArray): OwnshipDecodeResult {
-        if (packet.size < 12) return OwnshipDecodeResult.TooShort
+        // Packet is expected in framed logical form:
+        // [0]  = 0x7E
+        // [1]  = message type (10)
+        // [2]  = traffic alert / address type
+        // [3]  = address byte 1
+        // [4]  = address byte 2
+        // [5]  = address byte 3
+        // [6]  = latitude byte 1
+        // [7]  = latitude byte 2
+        // [8]  = latitude byte 3
+        // [9]  = longitude byte 1
+        // [10] = longitude byte 2
+        // [11] = longitude byte 3
+        // [12] = altitude bits 11:4
+        // [13] = altitude bits 3:0 in upper nibble
+
+        if (packet.size < 14) return OwnshipDecodeResult.TooShort
 
         val latRaw = readSigned24(packet, 6)
         val lonRaw = readSigned24(packet, 9)
@@ -259,11 +289,24 @@ class GpxLogger(
             return OwnshipDecodeResult.InvalidLatLon
         }
 
+        val altitudeCode =
+            ((packet[12].toInt() and 0xFF) shl 4) or
+                    ((packet[13].toInt() and 0xF0) shr 4)
+
+        val elevationMeters =
+            if (altitudeCode == 0xFFF) {
+                null
+            } else {
+                val altitudeFeet = altitudeCode * 25 - 1000
+                altitudeFeet * 0.3048
+            }
+
         return OwnshipDecodeResult.Success(
             OwnshipFix(
                 timeMillis = System.currentTimeMillis(),
                 latitude = latitude,
-                longitude = longitude
+                longitude = longitude,
+                elevationMeters = elevationMeters
             )
         )
     }
