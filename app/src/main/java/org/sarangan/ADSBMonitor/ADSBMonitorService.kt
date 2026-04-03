@@ -250,6 +250,9 @@ class ADSBMonitorService : Service() {
         }
     }
 
+    private var hasLoggedFirstOwnship = false
+
+
     private fun processFrame(framePayload: ByteArray) {
         if (framePayload.isEmpty()) return
 
@@ -263,12 +266,17 @@ class ADSBMonitorService : Service() {
         when (type) {
             0 -> {
                 recordPacket("heartbeat")
+                // Ignore logging until first valid ownship trkpt has been written
             }
 
             10 -> {
                 recordPacket("gps")
 
                 when (val result = gpxLogger?.writeOwnshipIfPossible(logicalPacket)) {
+                    OwnshipWriteResult.WRITTEN -> {
+                        hasLoggedFirstOwnship = true
+                    }
+
                     OwnshipWriteResult.REJECTED_TOO_SHORT,
                     OwnshipWriteResult.REJECTED_INVALID_LATLON,
                     OwnshipWriteResult.LOGGER_CLOSED -> {
@@ -278,28 +286,32 @@ class ADSBMonitorService : Service() {
                     null -> {
                         Log.w(TAG, "gps frame received but gpxLogger is null")
                     }
-
-                    else -> {
-                    }
                 }
             }
 
             11 -> {
-                gpxLogger?.writeOwnshipGeoAltitudeEvent(logicalPacket)
+                if (hasLoggedFirstOwnship) {
+                    gpxLogger?.writeOwnshipGeoAltitudeEvent(logicalPacket)
+                }
             }
 
             20 -> {
                 recordPacket("traffic")
-                gpxLogger?.writeTrafficEvent(logicalPacket)
+                if (hasLoggedFirstOwnship) {
+                    gpxLogger?.writeTrafficEvent(logicalPacket)
+                }
             }
 
             7 -> {
                 recordPacket("uplink")
-                gpxLogger?.writeUplinkEvent(logicalPacket)
+                if (hasLoggedFirstOwnship) {
+                    gpxLogger?.writeUplinkEvent(logicalPacket)
+                }
             }
 
             0x4C -> {
                 recordPacket("ahrs")
+                // UI only, no GPX write
             }
 
             83, 101, 204 -> {
@@ -403,11 +415,13 @@ class ADSBMonitorService : Service() {
         if (enabled) {
             if (gpxLogger == null) {
                 gpxLogger = GpxLogger(this)
+                hasLoggedFirstOwnship = false
                 Log.d(TAG, "Logging started: ${gpxLogger?.getLocationDescription()}")
             }
         } else {
             gpxLogger?.close()
             gpxLogger = null
+            hasLoggedFirstOwnship = false
             Log.d(TAG, "Logging stopped")
         }
     }
