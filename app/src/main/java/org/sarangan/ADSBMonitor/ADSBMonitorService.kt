@@ -24,7 +24,7 @@ class ADSBMonitorService : Service() {
 
     companion object {
         private const val TAG = "ADSBMonitor"
-        private const val CHANNEL_ID = "adsb_monitor_channel"
+        private const val CHANNEL_ID = "adsb_monitor_channel_v2"
         private const val NOTIFICATION_ID = 1001
         private const val GDL90_PORT = 4000
         private const val STRATUS_PORT = 41500
@@ -455,15 +455,34 @@ class ADSBMonitorService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "ADS-B Monitor",
-                NotificationManager.IMPORTANCE_LOW
-            )
+                "ADS-B Monitor Service",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Foreground service status for ADS-B monitoring and GPX logging"
+                enableVibration(false)
+                setSound(null, null)   // remove this line if you want an audible sound
+            }
+
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(channel)
         }
     }
 
     private fun buildNotification(text: String): Notification {
+        val openIntent = packageManager.getLaunchIntentForPackage(packageName)
+        val openPendingIntent =
+            if (openIntent != null) {
+                android.app.PendingIntent.getActivity(
+                    this,
+                    1,
+                    openIntent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                            android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+            } else {
+                null
+            }
+
         val stopIntent = Intent(this, ADSBMonitorService::class.java).apply {
             action = ADSBActions.ACTION_STOP
         }
@@ -472,18 +491,30 @@ class ADSBMonitorService : Service() {
             this,
             2,
             stopIntent,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                    android.app.PendingIntent.FLAG_IMMUTABLE
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("ADS-B Monitor Running")
-            .setContentText(text)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentTitle("ADS-B Monitor active")
+            .setContentText(text)
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "ADS-B Monitor active\n$text\nReceiving GDL-90 on UDP 4000 and writing GPX logs."
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .addAction(android.R.drawable.ic_delete, "Stop", stopPendingIntent)
-            .build()
+
+        openPendingIntent?.let {
+            builder.setContentIntent(it)
+        }
+
+        return builder.build()
     }
 
     private fun updateNotification() {

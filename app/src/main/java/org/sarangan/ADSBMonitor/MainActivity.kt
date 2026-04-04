@@ -38,9 +38,16 @@ class MainActivity : ComponentActivity() {
         ) { granted ->
 
             if (!granted) {
-
                 findViewById<TextView>(R.id.textViewError).text =
                     "Notification permission denied"
+                return@registerForActivityResult
+            }
+
+            findViewById<TextView>(R.id.textViewError).text = ""
+
+            window.decorView.post {
+                ensureServiceRunning()
+                updateServiceSettings()
             }
         }
 
@@ -138,20 +145,10 @@ class MainActivity : ComponentActivity() {
 
         // request notification permission (Android 13+)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-
-            if (
-                ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                )
-                != PackageManager.PERMISSION_GRANTED
-            ) {
-
-                notificationPermissionLauncher.launch(
-                    Manifest.permission.POST_NOTIFICATIONS
-                )
-            }
+        if (!hasNotificationPermission()) {
+            notificationPermissionLauncher.launch(
+                Manifest.permission.POST_NOTIFICATIONS
+            )
         }
 
         // auto-enable GDL90
@@ -208,9 +205,13 @@ class MainActivity : ComponentActivity() {
 
             window.decorView.post {
 
-                ensureServiceRunning()
-
-                updateServiceSettings()
+                if (hasNotificationPermission()) {
+                    ensureServiceRunning()
+                    updateServiceSettings()
+                } else {
+                    findViewById<TextView>(R.id.textViewError).text =
+                        "Notification permission required to start logging service"
+                }
             }
         }
     }
@@ -229,12 +230,39 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    private fun hasNotificationPermission(): Boolean {
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+
+        } else {
+
+            true
+        }
+    }
+
     private fun setupModeSwitch() {
 
         modeSwitch.setOnCheckedChangeListener { _, _ ->
 
             if (suppressCallback)
                 return@setOnCheckedChangeListener
+
+            if (!hasNotificationPermission()) {
+
+                findViewById<TextView>(R.id.textViewError).text =
+                    "Notification permission required to start logging service"
+
+                notificationPermissionLauncher.launch(
+                    Manifest.permission.POST_NOTIFICATIONS
+                )
+
+                return@setOnCheckedChangeListener
+            }
 
             ensureServiceRunning()
 
