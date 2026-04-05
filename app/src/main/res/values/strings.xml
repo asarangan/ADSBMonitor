@@ -6,6 +6,7 @@
     <string name="stopRecord">Idle</string>
     <string name="open_mode">GDL90 Mode</string>
     <string name="gps_light">GPS</string>
+    <string name="geoalt_light">Geodetic Alt</string>
     <string name="traffic_light">Traffic</string>
     <string name="ahrs_light">AHRS</string>
     <string name="uplink_light">Uplink</string>

@@ -290,6 +290,7 @@ class ADSBMonitorService : Service() {
             }
 
             11 -> {
+                recordPacket("geoalt")
                 if (hasLoggedFirstOwnship) {
                     gpxLogger?.writeOwnshipGeoAltitudeEvent(logicalPacket)
                 }

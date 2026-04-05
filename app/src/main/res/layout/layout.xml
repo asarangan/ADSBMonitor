@@ -11,6 +11,17 @@
         android:layout_height="match_parent">
 
         <TextView
+            android:id="@+id/textViewGeoAlt"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/geoalt_light"
+            android:textAppearance="@style/TextAppearance.AppCompat.Display1"
+            android:textColor="@android:color/black"
+            app:layout_constraintStart_toStartOf="@+id/textViewGPS"
+            app:layout_constraintTop_toBottomOf="@+id/textViewGPS" />
+
+        <TextView
             android:id="@+id/textViewUplinkCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -42,6 +53,17 @@
             android:textSize="18sp"
             app:layout_constraintBottom_toBottomOf="@+id/traffic_light"
             app:layout_constraintEnd_toStartOf="@+id/traffic_light" />
+
+        <TextView
+            android:id="@+id/textViewGeoAltCount"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="2dp"
+            android:text="@string/zero"
+            android:textSize="18sp"
+            app:layout_constraintBottom_toBottomOf="@+id/geoalt_light"
+            app:layout_constraintEnd_toStartOf="@+id/geoalt_light" />
 
         <TextView
             android:id="@+id/textViewGPSCount"
@@ -118,8 +140,8 @@
             android:text="@string/traffic_light"
             android:textAppearance="@style/TextAppearance.AppCompat.Display1"
             android:textColor="@android:color/black"
-            app:layout_constraintStart_toStartOf="@+id/textViewGPS"
-            app:layout_constraintTop_toBottomOf="@+id/textViewGPS" />
+            app:layout_constraintStart_toStartOf="@+id/textViewGeoAlt"
+            app:layout_constraintTop_toBottomOf="@+id/textViewGeoAlt" />
 
         <Button
             android:id="@+id/traffic_light"
@@ -130,6 +152,16 @@
             android:background="@drawable/circle_red"
             app:layout_constraintEnd_toStartOf="@+id/textViewTraffic"
             app:layout_constraintTop_toTopOf="@+id/textViewTraffic" />
+
+        <Button
+            android:id="@+id/geoalt_light"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="8dp"
+            android:layout_marginEnd="20dp"
+            android:background="@drawable/circle_red"
+            app:layout_constraintEnd_toStartOf="@+id/textViewGeoAlt"
+            app:layout_constraintTop_toTopOf="@+id/textViewGeoAlt" />
 
         <TextView
             android:id="@+id/textViewGPS"

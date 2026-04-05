@@ -368,6 +368,15 @@ class MainActivity : ComponentActivity() {
                     R.id.gps_light
             }
 
+            "geoalt" -> {
+
+                textId =
+                    R.id.textViewGeoAltCount
+
+                lightId =
+                    R.id.geoalt_light
+            }
+
             "traffic" -> {
 
                 textId =
