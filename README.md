@@ -2,7 +2,7 @@ The Stratus3 ADSB receiver is known to automatically switch to a proprietary mod
 
 
 
-This app also automatically saves the ADSB data to a file under Documents folder, including traffic and uplink weather. This could be useful for review and replay later.
+This app will also show the number of ADSB data packets being received. In addition, the app also automatically saves the ADSB data to a file under the Documents folder, including traffic and uplink weather. This could be useful for review and replay later.
 
 
 
