@@ -10,5 +10,5 @@ The APK is in app/release/app-release.apk
 
 
 
-<img src="screenshot.png" width="200">
+<img src="screenshot.png" width="300">
 
