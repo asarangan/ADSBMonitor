@@ -8,3 +8,7 @@ This app also automatically saves the ADSB data to a file under Documents folder
 
 The APK is in app/release/app-release.apk
 
+
+
+!\[Alt text](screenshot.png)
+
