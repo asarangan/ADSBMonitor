@@ -289,6 +289,10 @@ class ADSBMonitorService : Service() {
                 recordPacket("ahrs")
             }
 
+            0x65 -> {
+                recordPacket("ahrs")
+            }
+
             83, 101, 204 -> {
                 // Known vendor / status frames; ignore silently
             }
