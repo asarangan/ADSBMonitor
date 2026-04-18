@@ -47,7 +47,6 @@ class MainActivity : ComponentActivity() {
 
             window.decorView.post {
                 ensureServiceRunning()
-                updateServiceSettings()
             }
         }
 
@@ -143,15 +142,11 @@ class MainActivity : ComponentActivity() {
                 )
             )
 
-        // request notification permission (Android 13+)
-
         if (!hasNotificationPermission()) {
             notificationPermissionLauncher.launch(
                 Manifest.permission.POST_NOTIFICATIONS
             )
         }
-
-        // auto-enable GDL90
 
         suppressCallback = true
 
@@ -207,7 +202,6 @@ class MainActivity : ComponentActivity() {
 
                 if (hasNotificationPermission()) {
                     ensureServiceRunning()
-                    updateServiceSettings()
                 } else {
                     findViewById<TextView>(R.id.textViewError).text =
                         "Notification permission required to start logging service"

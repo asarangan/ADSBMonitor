@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.io.ByteArrayOutputStream
+import java.math.BigInteger
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -30,8 +31,6 @@ class ADSBMonitorService : Service() {
         private const val STRATUS_PORT = 41500
     }
 
-    private var broadcastAddress: InetAddress? = null
-
     private var running = false
     private var openGdlMode = true
     private var loggingEnabled = false
@@ -46,6 +45,7 @@ class ADSBMonitorService : Service() {
     private val packetCount = mutableMapOf(
         "heartbeat" to 0,
         "gps" to 0,
+        "geoalt" to 0,
         "traffic" to 0,
         "ahrs" to 0,
         "uplink" to 0
@@ -53,6 +53,8 @@ class ADSBMonitorService : Service() {
 
     @Volatile
     private var cleanedUp = false
+
+    private var hasLoggedFirstOwnship = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -178,29 +180,6 @@ class ADSBMonitorService : Service() {
             return
         }
 
-        try {
-            val dhcp = wifiManager.dhcpInfo
-            if (dhcp != null) {
-                val bcast = (dhcp.ipAddress and dhcp.netmask) or dhcp.netmask.inv()
-                val quads = byteArrayOf(
-                    (bcast and 0xFF).toByte(),
-                    ((bcast shr 8) and 0xFF).toByte(),
-                    ((bcast shr 16) and 0xFF).toByte(),
-                    ((bcast shr 24) and 0xFF).toByte()
-                )
-                broadcastAddress = InetAddress.getByAddress(quads)
-            } else {
-                broadcastAddress = InetAddress.getByName("255.255.255.255")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Unable to compute broadcast address", e)
-            try {
-                broadcastAddress = InetAddress.getByName("255.255.255.255")
-            } catch (_: Exception) {
-                broadcastAddress = null
-            }
-        }
-
         setLogging(loggingEnabled)
 
         workerThread = thread(start = true, name = "adsb-monitor-thread") {
@@ -250,9 +229,6 @@ class ADSBMonitorService : Service() {
         }
     }
 
-    private var hasLoggedFirstOwnship = false
-
-
     private fun processFrame(framePayload: ByteArray) {
         if (framePayload.isEmpty()) return
 
@@ -266,7 +242,6 @@ class ADSBMonitorService : Service() {
         when (type) {
             0 -> {
                 recordPacket("heartbeat")
-                // Ignore logging until first valid ownship trkpt has been written
             }
 
             10 -> {
@@ -312,7 +287,6 @@ class ADSBMonitorService : Service() {
 
             0x4C -> {
                 recordPacket("ahrs")
-                // UI only, no GPX write
             }
 
             83, 101, 204 -> {
@@ -433,6 +407,31 @@ class ADSBMonitorService : Service() {
         }.start()
     }
 
+    private fun getDirectedBroadcastAddress(): InetAddress? {
+        return try {
+            val wifiManager =
+                applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+            val longIp = wifiManager.connectionInfo.ipAddress.toLong()
+            val byteIp = BigInteger.valueOf(longIp).toByteArray().reversedArray()
+
+            val ipAddress = try {
+                InetAddress.getByAddress(byteIp).hostAddress
+            } catch (_: Exception) {
+                null
+            } ?: return null
+
+            val lastDotIndex = ipAddress.lastIndexOf(".")
+            if (lastDotIndex <= 0) return null
+
+            val ipAddress255 = ipAddress.substring(0, lastDotIndex) + ".255"
+            InetAddress.getByName(ipAddress255)
+        } catch (e: Exception) {
+            Log.e(TAG, "Unable to derive directed broadcast address", e)
+            null
+        }
+    }
+
     private fun sendModePacket() {
         val sendData = if (openGdlMode) stratusDataOpen else stratusDataClose
 
@@ -443,7 +442,11 @@ class ADSBMonitorService : Service() {
                 socketOut = this
             }
 
-            val target = broadcastAddress ?: InetAddress.getByName("255.255.255.255")
+            val target = getDirectedBroadcastAddress()
+                ?: InetAddress.getByName("255.255.255.255")
+
+            Log.d(TAG, "Sending mode packet to ${target.hostAddress}:$STRATUS_PORT")
+
             val packet = DatagramPacket(sendData, sendData.size, target, STRATUS_PORT)
             outSocket.send(packet)
         } catch (e: Exception) {
@@ -461,7 +464,7 @@ class ADSBMonitorService : Service() {
             ).apply {
                 description = "Foreground service status for ADS-B monitoring and GPX logging"
                 enableVibration(false)
-                setSound(null, null)   // remove this line if you want an audible sound
+                setSound(null, null)
             }
 
             val nm = getSystemService(NotificationManager::class.java)
