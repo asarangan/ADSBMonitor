@@ -234,10 +234,12 @@ class ADSBMonitorService : Service() {
 
         val type = framePayload[0].toInt() and 0xFF
 
-        val logicalPacket = ByteArray(framePayload.size + 2)
-        logicalPacket[0] = 0x7E.toByte()
-        System.arraycopy(framePayload, 0, logicalPacket, 1, framePayload.size)
-        logicalPacket[logicalPacket.size - 1] = 0x7E.toByte()
+//        val logicalPacket = ByteArray(framePayload.size + 2)
+//        logicalPacket[0] = 0x7E.toByte()
+//        System.arraycopy(framePayload, 0, logicalPacket, 1, framePayload.size)
+//        logicalPacket[logicalPacket.size - 1] = 0x7E.toByte()
+
+        val logicalPacket = framePayload.copyOf()
 
         when (type) {
             0 -> {
