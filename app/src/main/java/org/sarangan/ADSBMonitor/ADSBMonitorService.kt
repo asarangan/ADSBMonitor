@@ -13,7 +13,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.io.ByteArrayOutputStream
-import java.math.BigInteger
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -197,7 +196,7 @@ class ADSBMonitorService : Service() {
                 return@thread
             }
 
-            sendModePacket()
+            sendModePacketBurst()
             broadcastStatus()
             updateNotification()
 
@@ -218,6 +217,23 @@ class ADSBMonitorService : Service() {
                 }
             }
         }
+    }
+
+    private fun sendModePacketBurst() {
+        Thread {
+            repeat(4) { index ->
+                if (!running) return@Thread
+
+                Log.d(TAG, "Sending startup mode packet ${index + 1}/4")
+                sendModePacket()
+
+                try {
+                    Thread.sleep(1500)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+            }
+        }.start()
     }
 
     private fun processDatagram(datagram: ByteArray) {
@@ -418,20 +434,23 @@ class ADSBMonitorService : Service() {
             val wifiManager =
                 applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
 
-            val longIp = wifiManager.connectionInfo.ipAddress.toLong()
-            val byteIp = BigInteger.valueOf(longIp).toByteArray().reversedArray()
+            val ip = wifiManager.connectionInfo.ipAddress
 
-            val ipAddress = try {
-                InetAddress.getByAddress(byteIp).hostAddress
-            } catch (_: Exception) {
-                null
-            } ?: return null
+            if (ip == 0) {
+                Log.w(TAG, "WiFi IP address is 0; cannot derive directed broadcast")
+                return null
+            }
 
-            val lastDotIndex = ipAddress.lastIndexOf(".")
-            if (lastDotIndex <= 0) return null
+            val a = ip and 0xFF
+            val b = ip shr 8 and 0xFF
+            val c = ip shr 16 and 0xFF
 
-            val ipAddress255 = ipAddress.substring(0, lastDotIndex) + ".255"
-            InetAddress.getByName(ipAddress255)
+            val broadcastString = "$a.$b.$c.255"
+
+            Log.d(TAG, "Derived directed broadcast address: $broadcastString")
+
+            InetAddress.getByName(broadcastString)
+
         } catch (e: Exception) {
             Log.e(TAG, "Unable to derive directed broadcast address", e)
             null
