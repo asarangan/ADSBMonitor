@@ -260,26 +260,31 @@ class GpxLogger(
     }
 
     private fun decodeOwnship(packet: ByteArray): OwnshipDecodeResult {
-        // Packet is expected in framed logical form:
-        // [0]  = 0x7E
-        // [1]  = message type (10)
-        // [2]  = traffic alert / address type
-        // [3]  = address byte 1
-        // [4]  = address byte 2
-        // [5]  = address byte 3
-        // [6]  = latitude byte 1
-        // [7]  = latitude byte 2
-        // [8]  = latitude byte 3
-        // [9]  = longitude byte 1
-        // [10] = longitude byte 2
-        // [11] = longitude byte 3
-        // [12] = altitude bits 11:4
-        // [13] = altitude bits 3:0 in upper nibble
+        // Packet is expected in unframed, de-escaped logical form:
+        // [0]  = message type (10 / 0x0A)
+        // [1]  = traffic alert / address type
+        // [2]  = address byte 1
+        // [3]  = address byte 2
+        // [4]  = address byte 3
+        // [5]  = latitude byte 1
+        // [6]  = latitude byte 2
+        // [7]  = latitude byte 3
+        // [8]  = longitude byte 1
+        // [9]  = longitude byte 2
+        // [10] = longitude byte 3
+        // [11] = altitude bits 11:4
+        // [12] = altitude bits 3:0 in upper nibble
 
-        if (packet.size < 14) return OwnshipDecodeResult.TooShort
+        if (packet.size < 13) return OwnshipDecodeResult.TooShort
 
-        val latRaw = readSigned24(packet, 6)
-        val lonRaw = readSigned24(packet, 9)
+        val type = packet[0].toInt() and 0xFF
+        if (type != 0x0A) {
+            Log.w(TAG, "Rejected ownship packet: wrong type=$type len=${packet.size}")
+            return OwnshipDecodeResult.TooShort
+        }
+
+        val latRaw = readSigned24(packet, 5)
+        val lonRaw = readSigned24(packet, 8)
 
         val latitude = latRaw * 180.0 / 8388608.0
         val longitude = lonRaw * 180.0 / 8388608.0
@@ -290,8 +295,8 @@ class GpxLogger(
         }
 
         val altitudeCode =
-            ((packet[12].toInt() and 0xFF) shl 4) or
-                    ((packet[13].toInt() and 0xF0) shr 4)
+            ((packet[11].toInt() and 0xFF) shl 4) or
+                    ((packet[12].toInt() and 0xF0) shr 4)
 
         val elevationMeters =
             if (altitudeCode == 0xFFF) {
