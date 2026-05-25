@@ -28,11 +28,26 @@ class ADSBMonitorService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val GDL90_PORT = 4000
         private const val STRATUS_PORT = 41500
+
+        private const val STARTUP_MODE_BURST_COUNT = 4
+        private const val STARTUP_MODE_BURST_DELAY_MS = 1500L
+        private const val MODE_KEEP_ALIVE_INTERVAL_MS = 60_000L
     }
 
+    @Volatile
     private var running = false
+
+    @Volatile
     private var openGdlMode = true
+
+    @Volatile
     private var loggingEnabled = false
+
+    @Volatile
+    private var cleanedUp = false
+
+    @Volatile
+    private var modeKeepAliveThread: Thread? = null
 
     private var socketOut: DatagramSocket? = null
     private var socketIn: DatagramSocket? = null
@@ -49,9 +64,6 @@ class ADSBMonitorService : Service() {
         "ahrs" to 0,
         "uplink" to 0
     )
-
-    @Volatile
-    private var cleanedUp = false
 
     private var hasLoggedFirstOwnship = false
 
@@ -82,6 +94,7 @@ class ADSBMonitorService : Service() {
                 } else {
                     setLogging(loggingEnabled)
                     sendModePacketAsync()
+                    startModeKeepAlive()
                     broadcastStatus()
                     updateNotification()
                 }
@@ -89,7 +102,11 @@ class ADSBMonitorService : Service() {
 
             ADSBActions.ACTION_SET_MODE -> {
                 openGdlMode = intent.getBooleanExtra(ADSBExtras.EXTRA_OPEN_GDL, true)
+
+                // Send immediately when the switch changes. The keep-alive thread will
+                // then continue sending the currently selected mode once per minute.
                 sendModePacketAsync()
+
                 broadcastStatus()
                 updateNotification()
             }
@@ -103,6 +120,7 @@ class ADSBMonitorService : Service() {
 
             ADSBActions.ACTION_STOP -> {
                 stopAndCleanup()
+                return START_NOT_STICKY
             }
         }
 
@@ -117,43 +135,6 @@ class ADSBMonitorService : Service() {
     override fun onDestroy() {
         stopAndCleanup()
         super.onDestroy()
-    }
-
-    private fun stopAndCleanup() {
-        if (cleanedUp) return
-        cleanedUp = true
-
-        running = false
-
-        try {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } catch (_: Exception) {
-        }
-
-        try {
-            socketIn?.close()
-        } catch (_: Exception) {
-        }
-
-        try {
-            socketOut?.close()
-        } catch (_: Exception) {
-        }
-
-        try {
-            multicastLock?.release()
-        } catch (_: Exception) {
-        }
-
-        Thread {
-            try {
-                gpxLogger?.close()
-            } catch (_: Exception) {
-            } finally {
-                gpxLogger = null
-                stopSelf()
-            }
-        }.start()
     }
 
     private fun startMonitoring() {
@@ -175,7 +156,7 @@ class ADSBMonitorService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Unable to create output socket", e)
             broadcastError("Unable to create UDP output socket")
-            stopSelf()
+            stopAndCleanup()
             return
         }
 
@@ -192,23 +173,25 @@ class ADSBMonitorService : Service() {
             } catch (e: Exception) {
                 broadcastError("Cannot open port $GDL90_PORT")
                 Log.e(TAG, "Unable to open shared port $GDL90_PORT", e)
-                stopSelf()
+                stopAndCleanup()
                 return@thread
             }
 
-            sendModePacketBurst()
+            sendModePacketBurstAsync()
+            startModeKeepAlive()
             broadcastStatus()
             updateNotification()
 
             val buffer = ByteArray(4096)
 
-            while (running) {
+            while (running && !Thread.currentThread().isInterrupted) {
                 try {
                     val packet = DatagramPacket(buffer, buffer.size)
                     socketIn?.receive(packet)
                     val bytes = packet.data.copyOf(packet.length)
                     processDatagram(bytes)
                 } catch (_: SocketTimeoutException) {
+                    // Normal timeout used so the loop can periodically check running.
                 } catch (e: Exception) {
                     if (running) {
                         Log.e(TAG, "Runtime exception", e)
@@ -216,24 +199,120 @@ class ADSBMonitorService : Service() {
                     }
                 }
             }
+
+            Log.d(TAG, "ADS-B monitor worker thread stopped")
         }
     }
 
-    private fun sendModePacketBurst() {
-        Thread {
-            repeat(4) { index ->
-                if (!running) return@Thread
+    private fun stopAndCleanup() {
+        if (cleanedUp) return
+        cleanedUp = true
 
-                Log.d(TAG, "Sending startup mode packet ${index + 1}/4")
+        running = false
+
+        stopModeKeepAlive()
+
+        try {
+            workerThread?.interrupt()
+        } catch (_: Exception) {
+        }
+        workerThread = null
+
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {
+        }
+
+        try {
+            socketIn?.close()
+        } catch (_: Exception) {
+        }
+        socketIn = null
+
+        try {
+            socketOut?.close()
+        } catch (_: Exception) {
+        }
+        socketOut = null
+
+        try {
+            if (multicastLock?.isHeld == true) {
+                multicastLock?.release()
+            }
+        } catch (_: Exception) {
+        }
+        multicastLock = null
+
+        thread(start = true, name = "adsb-gpx-close") {
+            try {
+                gpxLogger?.close()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing GPX logger", e)
+            } finally {
+                gpxLogger = null
+                hasLoggedFirstOwnship = false
+                stopSelf()
+            }
+        }
+    }
+
+    private fun sendModePacketBurstAsync() {
+        thread(start = true, name = "adsb-mode-startup-burst") {
+            repeat(STARTUP_MODE_BURST_COUNT) { index ->
+                if (!running || Thread.currentThread().isInterrupted) return@thread
+
+                Log.d(TAG, "Sending startup mode packet ${index + 1}/$STARTUP_MODE_BURST_COUNT")
                 sendModePacket()
 
                 try {
-                    Thread.sleep(1500)
+                    Thread.sleep(STARTUP_MODE_BURST_DELAY_MS)
                 } catch (_: InterruptedException) {
-                    return@Thread
+                    return@thread
                 }
             }
-        }.start()
+        }
+    }
+
+    private fun startModeKeepAlive() {
+        if (modeKeepAliveThread?.isAlive == true) {
+            Log.d(TAG, "Mode keep-alive already running")
+            return
+        }
+
+        modeKeepAliveThread = thread(start = true, name = "adsb-mode-keepalive") {
+            Log.d(TAG, "Mode keep-alive thread started")
+
+            while (running && !Thread.currentThread().isInterrupted) {
+                try {
+                    Thread.sleep(MODE_KEEP_ALIVE_INTERVAL_MS)
+
+                    if (!running || Thread.currentThread().isInterrupted) break
+
+                    Log.d(
+                        TAG,
+                        "Sending periodic Stratus mode keep-alive: " +
+                                if (openGdlMode) "OPEN/GDL" else "CLOSE/ForeFlight"
+                    )
+
+                    sendModePacket()
+                } catch (_: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in mode keep-alive thread", e)
+                }
+            }
+
+            Log.d(TAG, "Mode keep-alive thread stopped")
+        }
+    }
+
+    private fun stopModeKeepAlive() {
+        try {
+            modeKeepAliveThread?.interrupt()
+        } catch (_: Exception) {
+        } finally {
+            modeKeepAliveThread = null
+        }
     }
 
     private fun processDatagram(datagram: ByteArray) {
@@ -250,11 +329,8 @@ class ADSBMonitorService : Service() {
 
         val type = framePayload[0].toInt() and 0xFF
 
-//        val logicalPacket = ByteArray(framePayload.size + 2)
-//        logicalPacket[0] = 0x7E.toByte()
-//        System.arraycopy(framePayload, 0, logicalPacket, 1, framePayload.size)
-//        logicalPacket[logicalPacket.size - 1] = 0x7E.toByte()
-
+        // GPX stores the logical, de-escaped GDL-90 frame payload only.
+        // Do not add leading/trailing 0x7E frame delimiters here.
         val logicalPacket = framePayload.copyOf()
 
         when (type) {
@@ -312,7 +388,7 @@ class ADSBMonitorService : Service() {
             }
 
             83, 101, 204 -> {
-                // Known vendor / status frames; ignore silently
+                // Known vendor / status frames; ignore silently.
             }
 
             else -> {
@@ -327,7 +403,7 @@ class ADSBMonitorService : Service() {
     private fun extractGdl90Frames(datagram: ByteArray): List<ByteArray> {
         val frames = mutableListOf<ByteArray>()
         var inFrame = false
-        var frameBuffer = ByteArrayOutputStream()
+        val frameBuffer = ByteArrayOutputStream()
 
         for (b in datagram) {
             val ub = b.toInt() and 0xFF
@@ -424,9 +500,9 @@ class ADSBMonitorService : Service() {
     }
 
     private fun sendModePacketAsync() {
-        Thread {
+        thread(start = true, name = "adsb-mode-send") {
             sendModePacket()
-        }.start()
+        }
     }
 
     private fun getDirectedBroadcastAddress(): InetAddress? {
@@ -441,6 +517,7 @@ class ADSBMonitorService : Service() {
                 return null
             }
 
+            // Android reports WifiInfo.ipAddress little-endian on typical devices.
             val a = ip and 0xFF
             val b = ip shr 8 and 0xFF
             val c = ip shr 16 and 0xFF
@@ -450,7 +527,6 @@ class ADSBMonitorService : Service() {
             Log.d(TAG, "Derived directed broadcast address: $broadcastString")
 
             InetAddress.getByName(broadcastString)
-
         } catch (e: Exception) {
             Log.e(TAG, "Unable to derive directed broadcast address", e)
             null
@@ -470,7 +546,11 @@ class ADSBMonitorService : Service() {
             val target = getDirectedBroadcastAddress()
                 ?: InetAddress.getByName("255.255.255.255")
 
-            Log.d(TAG, "Sending mode packet to ${target.hostAddress}:$STRATUS_PORT")
+            Log.d(
+                TAG,
+                "Sending mode packet ${if (openGdlMode) "OPEN/GDL" else "CLOSE/ForeFlight"} " +
+                        "to ${target.hostAddress}:$STRATUS_PORT"
+            )
 
             val packet = DatagramPacket(sendData, sendData.size, target, STRATUS_PORT)
             outSocket.send(packet)
