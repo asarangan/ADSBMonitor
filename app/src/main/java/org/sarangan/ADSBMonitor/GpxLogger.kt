@@ -259,6 +259,15 @@ class GpxLogger(
         }
     }
 
+    fun writeOwnshipDiagnosticEvent(packet: ByteArray) {
+        if (closed) {
+            Log.w(TAG, "writeOwnshipDiagnosticEvent called while logger is closed")
+            return
+        }
+
+        writeEvent("ownship_warning", packet)
+    }
+
     private fun decodeOwnship(packet: ByteArray): OwnshipDecodeResult {
         // Packet is expected in unframed, de-escaped logical form:
         // [0]  = message type (10 / 0x0A)

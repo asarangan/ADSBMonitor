@@ -19,8 +19,13 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import kotlin.concurrent.thread
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 class ADSBMonitorService : Service() {
+
 
     companion object {
         private const val TAG = "ADSBMonitor"
@@ -32,7 +37,32 @@ class ADSBMonitorService : Service() {
         private const val STARTUP_MODE_BURST_COUNT = 4
         private const val STARTUP_MODE_BURST_DELAY_MS = 1500L
         private const val MODE_KEEP_ALIVE_INTERVAL_MS = 60_000L
+
+        private const val PACKET_QUALITY_OK = "ok"
+        private const val PACKET_QUALITY_WARN = "warn"
+
+        private const val MAX_OWNSHIP_SPEED_KT = 500.0
+
+        private const val MIN_GEO_ALTITUDE_FT = -1500.0
+        private const val MAX_GEO_ALTITUDE_FT = 60000.0
+        private const val MAX_GEO_VERTICAL_SPEED_FPM = 6000.0
+
     }
+
+    private data class LastOwnshipFix(
+        val timeMillis: Long,
+        val latitude: Double,
+        val longitude: Double
+    )
+
+    private data class LastGeoAltitude(
+        val timeMillis: Long,
+        val altitudeFeet: Double
+    )
+
+    private var lastOwnshipFix: LastOwnshipFix? = null
+    private var lastGeoAltitude: LastGeoAltitude? = null
+
 
     @Volatile
     private var running = false
@@ -339,27 +369,36 @@ class ADSBMonitorService : Service() {
             }
 
             10 -> {
-                recordPacket("gps")
+                val quality = classifyOwnshipQuality(logicalPacket)
+                recordPacket("gps", quality)
 
-                when (val result = gpxLogger?.writeOwnshipIfPossible(logicalPacket)) {
-                    OwnshipWriteResult.WRITTEN -> {
-                        hasLoggedFirstOwnship = true
-                    }
+                if (quality == PACKET_QUALITY_OK) {
+                    when (val result = gpxLogger?.writeOwnshipIfPossible(logicalPacket)) {
+                        OwnshipWriteResult.WRITTEN -> {
+                            hasLoggedFirstOwnship = true
+                        }
 
-                    OwnshipWriteResult.REJECTED_TOO_SHORT,
-                    OwnshipWriteResult.REJECTED_INVALID_LATLON,
-                    OwnshipWriteResult.LOGGER_CLOSED -> {
-                        Log.w(TAG, "Bad GPS ownship packet: ${result.name}")
-                    }
+                        OwnshipWriteResult.REJECTED_TOO_SHORT,
+                        OwnshipWriteResult.REJECTED_INVALID_LATLON,
+                        OwnshipWriteResult.LOGGER_CLOSED -> {
+                            Log.w(TAG, "Bad GPS ownship packet: ${result.name}")
+                            gpxLogger?.writeOwnshipDiagnosticEvent(logicalPacket)
+                        }
 
-                    null -> {
-                        Log.w(TAG, "gps frame received but gpxLogger is null")
+                        null -> {
+                            Log.w(TAG, "gps frame received but gpxLogger is null")
+                        }
                     }
+                } else {
+                    Log.w(TAG, "Ownship packet received but marked amber/warning")
+                    gpxLogger?.writeOwnshipDiagnosticEvent(logicalPacket)
                 }
             }
 
             11 -> {
-                recordPacket("geoalt")
+                val quality = classifyGeoAltitudeQuality(logicalPacket)
+                recordPacket("geoalt", quality)
+
                 if (hasLoggedFirstOwnship) {
                     gpxLogger?.writeOwnshipGeoAltitudeEvent(logicalPacket)
                 }
@@ -454,7 +493,10 @@ class ADSBMonitorService : Service() {
         return out.toByteArray()
     }
 
-    private fun recordPacket(token: String) {
+    private fun recordPacket(
+        token: String,
+        quality: String = PACKET_QUALITY_OK
+    ) {
         val newCount = (packetCount[token] ?: 0) + 1
         packetCount[token] = newCount
 
@@ -462,7 +504,9 @@ class ADSBMonitorService : Service() {
             setPackage(packageName)
             putExtra(ADSBExtras.EXTRA_PACKET_TYPE, token)
             putExtra(ADSBExtras.EXTRA_COUNT, newCount)
+            putExtra(ADSBExtras.EXTRA_PACKET_QUALITY, quality)
         }
+
         sendBroadcast(intent)
     }
 
@@ -639,4 +683,158 @@ class ADSBMonitorService : Service() {
 
     private fun ByteArray.toHexString(): String =
         joinToString("") { "%02X".format(it.toInt() and 0xFF) }
+
+
+    private fun readSigned24(packet: ByteArray, offset: Int): Int {
+        var value =
+            ((packet[offset].toInt() and 0xFF) shl 16) or
+                    ((packet[offset + 1].toInt() and 0xFF) shl 8) or
+                    (packet[offset + 2].toInt() and 0xFF)
+
+        if ((value and 0x800000) != 0) {
+            value = value or -0x1000000
+        }
+
+        return value
+    }
+
+    private fun haversineNm(
+        lat1Deg: Double,
+        lon1Deg: Double,
+        lat2Deg: Double,
+        lon2Deg: Double
+    ): Double {
+        val earthRadiusNm = 3440.065
+
+        val lat1 = Math.toRadians(lat1Deg)
+        val lon1 = Math.toRadians(lon1Deg)
+        val lat2 = Math.toRadians(lat2Deg)
+        val lon2 = Math.toRadians(lon2Deg)
+
+        val dLat = lat2 - lat1
+        val dLon = lon2 - lon1
+
+        val a =
+            kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
+                    kotlin.math.cos(lat1) *
+                    kotlin.math.cos(lat2) *
+                    kotlin.math.sin(dLon / 2) *
+                    kotlin.math.sin(dLon / 2)
+
+        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
+
+        return earthRadiusNm * c
+    }
+
+    private fun classifyOwnshipQuality(packet: ByteArray): String {
+        if (packet.size < 11) return PACKET_QUALITY_WARN
+
+        val type = packet[0].toInt() and 0xFF
+        if (type != 0x0A) return PACKET_QUALITY_WARN
+
+        val latRaw = readSigned24(packet, 5)
+        val lonRaw = readSigned24(packet, 8)
+
+        if (latRaw == 0 && lonRaw == 0) {
+            Log.w(TAG, "Ownship GPS warning: zero lat/lon from receiver")
+            return PACKET_QUALITY_WARN
+        }
+
+        val latitude = latRaw * 180.0 / 8388608.0
+        val longitude = lonRaw * 180.0 / 8388608.0
+
+        if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) {
+            Log.w(TAG, "Ownship GPS warning: invalid lat/lon $latitude, $longitude")
+            return PACKET_QUALITY_WARN
+        }
+
+        val now = System.currentTimeMillis()
+        val previous = lastOwnshipFix
+
+        if (previous != null) {
+            val dtHours = (now - previous.timeMillis) / 3_600_000.0
+
+            if (dtHours > 0.0001) {
+                val distanceNm = haversineNm(
+                    previous.latitude,
+                    previous.longitude,
+                    latitude,
+                    longitude
+                )
+
+                val speedKt = distanceNm / dtHours
+
+                if (speedKt > MAX_OWNSHIP_SPEED_KT) {
+                    Log.w(
+                        TAG,
+                        "Ownship GPS warning: jump implies ${"%.1f".format(speedKt)} kt"
+                    )
+                    return PACKET_QUALITY_WARN
+                }
+            }
+        }
+
+        lastOwnshipFix = LastOwnshipFix(
+            timeMillis = now,
+            latitude = latitude,
+            longitude = longitude
+        )
+
+        return PACKET_QUALITY_OK
+    }
+
+
+
+    private fun classifyGeoAltitudeQuality(packet: ByteArray): String {
+        if (packet.size < 3) return PACKET_QUALITY_WARN
+
+        val type = packet[0].toInt() and 0xFF
+        if (type != 0x0B) return PACKET_QUALITY_WARN
+
+        val raw =
+            ((packet[1].toInt() and 0xFF) shl 8) or
+                    (packet[2].toInt() and 0xFF)
+
+        val signedRaw = if ((raw and 0x8000) != 0) {
+            raw or -0x10000
+        } else {
+            raw
+        }
+
+        val altitudeFeet = signedRaw * 5.0
+
+        if (altitudeFeet !in MIN_GEO_ALTITUDE_FT..MAX_GEO_ALTITUDE_FT) {
+            Log.w(TAG, "Geo altitude warning: altitudeFeet=$altitudeFeet")
+            return PACKET_QUALITY_WARN
+        }
+
+        val now = System.currentTimeMillis()
+        val previous = lastGeoAltitude
+
+        if (previous != null) {
+            val dtMinutes = (now - previous.timeMillis) / 60_000.0
+
+            if (dtMinutes > 0.001) {
+                val verticalSpeedFpm =
+                    kotlin.math.abs(altitudeFeet - previous.altitudeFeet) / dtMinutes
+
+                if (verticalSpeedFpm > MAX_GEO_VERTICAL_SPEED_FPM) {
+                    Log.w(
+                        TAG,
+                        "Geo altitude warning: jump implies ${"%.0f".format(verticalSpeedFpm)} fpm"
+                    )
+                    return PACKET_QUALITY_WARN
+                }
+            }
+        }
+
+        lastGeoAltitude = LastGeoAltitude(
+            timeMillis = now,
+            altitudeFeet = altitudeFeet
+        )
+
+        return PACKET_QUALITY_OK
+    }
+
+
 }

@@ -73,9 +73,15 @@ class MainActivity : ComponentActivity() {
                                 0
                             )
 
+                        val quality =
+                            intent.getStringExtra(
+                                ADSBExtras.EXTRA_PACKET_QUALITY
+                            ) ?: "ok"
+
                         updatePacketUi(
                             type,
-                            count
+                            count,
+                            quality
                         )
                     }
 
@@ -336,7 +342,8 @@ class MainActivity : ComponentActivity() {
 
     private fun updatePacketUi(
         token: String,
-        count: Int
+        count: Int,
+        quality: String
     ) {
 
         val textId: Int
@@ -406,10 +413,17 @@ class MainActivity : ComponentActivity() {
         ).text =
             count.toString()
 
+        val lightDrawable =
+            if (quality == "warn") {
+                R.drawable.circle_amber
+            } else {
+                R.drawable.circle_green
+            }
+
         findViewById<Button>(
             lightId
         ).setBackgroundResource(
-            R.drawable.circle_green
+            lightDrawable
         )
 
         timers[token]?.cancel()

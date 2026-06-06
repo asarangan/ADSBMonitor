@@ -43,4 +43,7 @@ object ADSBExtras {
     const val EXTRA_PACKET_TYPE = "packet_type"
     const val EXTRA_COUNT = "count"
     const val EXTRA_ERROR_TEXT = "error_text"
+
+    const val EXTRA_PACKET_QUALITY = "extra_packet_quality"
+
 }
