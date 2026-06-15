@@ -23,6 +23,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
+import android.os.PowerManager
 
 class ADSBMonitorService : Service() {
 
@@ -33,6 +34,10 @@ class ADSBMonitorService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val GDL90_PORT = 4000
         private const val STRATUS_PORT = 41500
+
+        private var wifiLock: WifiManager.WifiLock? = null
+        private var wakeLock: PowerManager.WakeLock? = null
+        //Need wifilock and wakelock to keep Stratus3 from stop delivering the UDP stream when screen is off
 
         private const val STARTUP_MODE_BURST_COUNT = 4
         private const val STARTUP_MODE_BURST_DELAY_MS = 1500L
@@ -158,7 +163,7 @@ class ADSBMonitorService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        stopAndCleanup()
+        Log.d(TAG, "Task removed; keeping ADS-B monitor foreground service running")
         super.onTaskRemoved(rootIntent)
     }
 
@@ -172,6 +177,29 @@ class ADSBMonitorService : Service() {
         cleanedUp = false
 
         val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+
+        wifiLock = wifiManager.createWifiLock(
+            WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+            "ADSBMonitor:wifi_lock"
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+        Log.d(TAG, "Wi-Fi high-performance lock acquired")
+
+        val powerManager =
+            applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager
+
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "ADSBMonitor:monitoring_wake_lock"
+        ).apply {
+            setReferenceCounted(false)
+            acquire()
+        }
+        Log.d(TAG, "Partial wake lock acquired")
+
+
 
         multicastLock = wifiManager.createMulticastLock("adsb_multicast_lock").apply {
             setReferenceCounted(false)
@@ -241,6 +269,28 @@ class ADSBMonitorService : Service() {
         running = false
 
         stopModeKeepAlive()
+
+        try {
+            if (wifiLock?.isHeld == true) {
+                wifiLock?.release()
+                Log.d(TAG, "Wi-Fi high-performance lock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing Wi-Fi lock", e)
+        } finally {
+            wifiLock = null
+        }
+
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+                Log.d(TAG, "Partial wake lock released")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error releasing wake lock", e)
+        } finally {
+            wakeLock = null
+        }
 
         try {
             workerThread?.interrupt()

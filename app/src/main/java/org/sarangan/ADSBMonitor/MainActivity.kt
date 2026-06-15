@@ -131,6 +131,8 @@ class MainActivity : ComponentActivity() {
 
         setContentView(R.layout.layout)
 
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         modeSwitch =
             findViewById(R.id.switchGDL90)
 
